@@ -7,14 +7,16 @@ use thiserror::Error;
 
 use crate::application::{
     BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, CodeGraphImpactInput,
-    ContextIngestInput, DecisionAddInput, HarnessContext, HarnessService, InitResult, IntakeInput,
+    ContextIngestInput, DecisionAddInput, FrictionAddInput, FrictionEvidenceInput,
+    FrictionProposedActionInput, HarnessContext, HarnessService, InitResult, IntakeInput,
     MigrateResult, NotebookBriefInput, QueryTable, ReleaseVerifyInput, StoryAddInput,
     StoryUpdateInput, TraceInput,
 };
 use crate::domain::{
     parse_optional_integer, path_has_any_segment, proof_display, BacklogFilter, BacklogRecord,
     BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList, DecisionRecord,
-    FrictionRecord, HarnessStats, InputType, IntakeRecord, MappedContext, ReleaseCheckResult,
+    FrictionActionType, FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionSource,
+    FrictionType, HarnessStats, InputType, IntakeRecord, MappedContext, ReleaseCheckResult,
     RiskLane, StoryMatrixRecord, TraceQualityTier, TraceRecord, TraceScoreResult, RISK_LANE_HELP,
 };
 
@@ -45,6 +47,8 @@ enum Command {
     Backlog(BacklogArgs),
     /// Record an agent execution trace.
     Trace(TraceArgs),
+    /// Capture structured Harness friction events.
+    Friction(FrictionArgs),
     /// Score a trace against the trace quality tiers.
     ScoreTrace(ScoreTraceArgs),
     /// Query harness data.
@@ -299,6 +303,60 @@ struct TraceArgs {
 }
 
 #[derive(Args, Debug)]
+struct FrictionArgs {
+    #[command(subcommand)]
+    action: FrictionAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum FrictionAction {
+    /// Capture a typed friction event.
+    Add(FrictionAddArgs),
+}
+
+#[derive(Args, Debug)]
+struct FrictionAddArgs {
+    #[arg(long = "event-id")]
+    event_id: Option<String>,
+    #[arg(long)]
+    story: Option<String>,
+    #[arg(long)]
+    trace: Option<String>,
+    #[arg(long = "type", value_name = "FRICTION_TYPE")]
+    friction_type: String,
+    #[arg(long, value_name = "low|medium|high")]
+    severity: String,
+    #[arg(long, value_name = "trace|agent|review|workflow|provider")]
+    source: String,
+    #[arg(long)]
+    summary: String,
+    #[arg(long = "observed-at")]
+    observed_at: Option<String>,
+    #[arg(long)]
+    provider: Option<String>,
+    #[arg(long = "affected")]
+    affected_paths: Option<String>,
+    #[arg(long = "evidence-command")]
+    evidence_command: Option<String>,
+    #[arg(long = "evidence-exit-code")]
+    evidence_exit_code: Option<String>,
+    #[arg(long = "evidence-artifact")]
+    evidence_artifact: Option<String>,
+    #[arg(long = "evidence-report")]
+    evidence_report: Option<String>,
+    #[arg(long = "evidence-details")]
+    evidence_details: Option<String>,
+    #[arg(long = "proposed-action")]
+    proposed_action: Option<String>,
+    #[arg(long = "proposed-title")]
+    proposed_title: Option<String>,
+    #[arg(long = "proposed-target")]
+    proposed_target: Option<String>,
+    #[arg(long)]
+    notes: Option<String>,
+}
+
+#[derive(Args, Debug)]
 struct ScoreTraceArgs {
     /// Score a specific trace id. Defaults to the latest trace.
     #[arg(long)]
@@ -448,6 +506,8 @@ enum QueryView {
     Traces,
     /// Traces with harness friction.
     Friction,
+    /// Structured friction events.
+    FrictionEvents,
     /// Summary counts.
     Stats,
     /// Run arbitrary SQL.
@@ -943,6 +1003,42 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                 print_story_verify_warning(&service, &story_id)?;
             }
         }
+        Command::Friction(args) => match args.action {
+            FrictionAction::Add(args) => {
+                let id = service.add_friction_event(FrictionAddInput {
+                    event_id: args.event_id,
+                    story_id: args.story,
+                    trace_id: parse_optional_integer("friction add: --trace", args.trace)?,
+                    friction_type: FrictionType::from_str(&args.friction_type)?,
+                    severity: FrictionSeverity::from_str(&args.severity)?,
+                    source: FrictionSource::from_str(&args.source)?,
+                    summary: args.summary,
+                    observed_at: args.observed_at,
+                    provider: args.provider,
+                    affected_paths: CsvList::from_optional(args.affected_paths),
+                    evidence: FrictionEvidenceInput {
+                        command: args.evidence_command,
+                        exit_code: parse_optional_integer(
+                            "friction add: --evidence-exit-code",
+                            args.evidence_exit_code,
+                        )?,
+                        artifact_path: args.evidence_artifact,
+                        report_path: args.evidence_report,
+                        details: args.evidence_details,
+                    },
+                    proposed_action: FrictionProposedActionInput {
+                        action_type: args
+                            .proposed_action
+                            .map(|value| FrictionActionType::from_str(&value))
+                            .transpose()?,
+                        title: args.proposed_title,
+                        target_path: args.proposed_target,
+                    },
+                    notes: args.notes,
+                })?;
+                println!("Friction event #{id} recorded.");
+            }
+        },
         Command::ScoreTrace(args) => {
             let id = parse_optional_integer("score-trace: --id", args.id)?;
             let result = service.score_trace(id)?;
@@ -960,6 +1056,7 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
             QueryView::Intakes => print_intakes(&service.query_intakes()?),
             QueryView::Traces => print_traces(&service.query_traces()?),
             QueryView::Friction => print_friction(&service.query_friction()?),
+            QueryView::FrictionEvents => print_friction_events(&service.query_friction_events()?),
             QueryView::Stats => print_stats(&service.query_stats()?),
             QueryView::Sql { query } => {
                 if query.is_empty() {
@@ -1371,6 +1468,42 @@ fn print_friction(records: &[FrictionRecord]) {
     );
 }
 
+fn print_friction_events(records: &[FrictionEventRecord]) {
+    let rows = records
+        .iter()
+        .map(|record| {
+            vec![
+                record.id.to_string(),
+                record.captured_at.clone(),
+                record.story_id.clone().unwrap_or_else(|| "-".to_owned()),
+                record
+                    .trace_id
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_owned()),
+                record.friction_type.clone(),
+                record.severity.clone(),
+                record.source.clone(),
+                record.provider.clone().unwrap_or_else(|| "-".to_owned()),
+                record.summary.clone(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print_table(
+        &[
+            "id",
+            "captured_at",
+            "story_id",
+            "trace_id",
+            "friction_type",
+            "severity",
+            "source",
+            "provider",
+            "summary",
+        ],
+        &rows,
+    );
+}
+
 fn print_stats(stats: &HarnessStats) {
     println!("=== Harness Stats ===");
     print_table(
@@ -1552,6 +1685,17 @@ mod tests {
             .to_string();
         assert!(backlog_add_help.contains("--risk <tiny|normal|high-risk>"));
         assert!(backlog_add_help.contains("Accepted lanes"));
+
+        let friction_add_help = command
+            .find_subcommand_mut("friction")
+            .unwrap()
+            .find_subcommand_mut("add")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(friction_add_help.contains("--type <FRICTION_TYPE>"));
+        assert!(friction_add_help.contains("--severity <low|medium|high>"));
+        assert!(friction_add_help.contains("--evidence-command <EVIDENCE_COMMAND>"));
 
         let matrix_help = command
             .find_subcommand_mut("query")

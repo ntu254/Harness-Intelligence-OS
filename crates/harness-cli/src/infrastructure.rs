@@ -14,18 +14,19 @@ use thiserror::Error;
 use crate::application::{
     AutoIntakeEvidence, BacklogAddInput, BacklogCloseInput, BrownfieldImportResult,
     CodeGraphImpactInput, CodeGraphImpactResult, ContextIngestInput, ContextIngestSummary,
-    ContextPackData, DecisionAddInput, DecisionVerifyResult, HarnessContext, InitResult,
-    IntakeInput, MigrateResult, NotebookBriefInput, NotebookBriefResult, QueryTable,
+    ContextPackData, DecisionAddInput, DecisionVerifyResult, FrictionAddInput, HarnessContext,
+    InitResult, IntakeInput, MigrateResult, NotebookBriefInput, NotebookBriefResult, QueryTable,
     ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput,
 };
 use crate::domain::{
     normalize_token, path_has_any_segment, score_trace, ArchitectureCheckResult,
     ArchitectureConfig, ArchitectureViolation, BacklogFilter, BacklogRecord, CodeGraphMode,
     ContextIngestDiagnostic, ContextIngestGovernance, ContextIngestReport, ContextIngestStatus,
-    ContextSource, ContextSourceArtifact, DecisionRecord, FrictionRecord, HarnessStats,
-    IntakeRecord, MappedContext, ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig,
-    ReleaseVerificationReport, RiskLane, StoryGateResult, StoryMatrixRecord, StoryVerifyStatus,
-    TraceRecord, TraceScoreResult, TraceScoreSource,
+    ContextSource, ContextSourceArtifact, DecisionRecord, FrictionEventRecord, FrictionRecord,
+    FrictionSeverity, FrictionType, HarnessStats, IntakeRecord, MappedContext,
+    ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig, ReleaseVerificationReport, RiskLane,
+    StoryGateResult, StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
+    TraceScoreSource,
 };
 
 pub type Result<T> = std::result::Result<T, HarnessInfraError>;
@@ -65,6 +66,8 @@ pub enum HarnessInfraError {
     InvalidReleaseInput(String),
     #[error("context ingest input is invalid: {0}")]
     InvalidContextIngest(String),
+    #[error("friction event input is invalid: {0}")]
+    InvalidFrictionEvent(String),
     #[error("backlog close: backlog item '{0}' not found")]
     BacklogNotFound(i64),
     #[error("trace '{0}' not found")]
@@ -109,6 +112,7 @@ pub trait HarnessRepository {
     fn add_backlog(&self, input: BacklogAddInput) -> Result<i64>;
     fn close_backlog(&self, input: BacklogCloseInput) -> Result<()>;
     fn record_trace(&self, input: TraceInput) -> Result<i64>;
+    fn add_friction_event(&self, input: FrictionAddInput) -> Result<i64>;
     fn score_trace(&self, id: Option<i64>) -> Result<TraceScoreResult>;
     fn story_verify_status(&self, id: &str) -> Result<StoryVerifyStatus>;
     fn query_matrix(&self) -> Result<Vec<StoryMatrixRecord>>;
@@ -117,6 +121,7 @@ pub trait HarnessRepository {
     fn query_intakes(&self) -> Result<Vec<IntakeRecord>>;
     fn query_traces(&self) -> Result<Vec<TraceRecord>>;
     fn query_friction(&self) -> Result<Vec<FrictionRecord>>;
+    fn query_friction_events(&self) -> Result<Vec<FrictionEventRecord>>;
     fn query_stats(&self) -> Result<HarnessStats>;
     fn query_sql(&self, sql: &str) -> Result<QueryTable>;
     fn get_context_pack_data(&self, story_id: &str) -> Result<ContextPackData>;
@@ -1579,6 +1584,80 @@ impl HarnessRepository for SqliteHarnessRepository {
         Ok(connection.last_insert_rowid())
     }
 
+    fn add_friction_event(&self, input: FrictionAddInput) -> Result<i64> {
+        if input.summary.trim().is_empty() {
+            return Err(HarnessInfraError::InvalidFrictionEvent(
+                "summary is required".to_owned(),
+            ));
+        }
+        if input.friction_type == FrictionType::ProviderUnavailable
+            && input
+                .provider
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+        {
+            return Err(HarnessInfraError::InvalidFrictionEvent(
+                "provider_unavailable requires --provider".to_owned(),
+            ));
+        }
+        if let Some(observed_at) = &input.observed_at {
+            if !looks_like_rfc3339(observed_at) {
+                return Err(HarnessInfraError::InvalidFrictionEvent(
+                    "observed_at must be RFC 3339, for example 2026-06-07T00:00:00Z".to_owned(),
+                ));
+            }
+        }
+
+        let event_id = input
+            .event_id
+            .clone()
+            .unwrap_or_else(|| generated_friction_event_id(&input));
+        if !is_uuid(&event_id) {
+            return Err(HarnessInfraError::InvalidFrictionEvent(
+                "event_id must be a UUID".to_owned(),
+            ));
+        }
+
+        let evidence_json = friction_evidence_json(&input)?;
+        if input.severity == FrictionSeverity::High && evidence_json.is_none() {
+            return Err(HarnessInfraError::InvalidFrictionEvent(
+                "high severity requires evidence".to_owned(),
+            ));
+        }
+        let proposed_action_json = proposed_action_json(&input)?;
+
+        let connection = self.open_existing()?;
+        connection.execute(
+            "INSERT INTO friction_event (
+                event_id, story_id, trace_id, friction_type, severity, source,
+                summary, observed_at, provider, affected_paths, evidence_json,
+                proposed_action_json, notes
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                COALESCE(?8, strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                ?9, ?10, ?11, ?12, ?13
+             );",
+            params![
+                event_id,
+                input.story_id,
+                input.trace_id,
+                input.friction_type.as_db_value(),
+                input.severity.as_db_value(),
+                input.source.as_db_value(),
+                input.summary,
+                input.observed_at,
+                input.provider,
+                input.affected_paths.as_json_text(),
+                evidence_json,
+                proposed_action_json,
+                input.notes,
+            ],
+        )?;
+        Ok(connection.last_insert_rowid())
+    }
+
     fn score_trace(&self, id: Option<i64>) -> Result<TraceScoreResult> {
         let connection = self.open_existing()?;
         let sql = match id {
@@ -1800,6 +1879,34 @@ impl HarnessRepository for SqliteHarnessRepository {
         collect_rows(rows)
     }
 
+    fn query_friction_events(&self) -> Result<Vec<FrictionEventRecord>> {
+        let connection = self.open_existing()?;
+        let mut statement = connection.prepare(
+            "SELECT id, captured_at, event_id, story_id, trace_id, friction_type,
+                    severity, source, summary, provider
+             FROM friction_event
+             ORDER BY id DESC
+             LIMIT 50;",
+        )?;
+
+        let rows = statement.query_map([], |row| {
+            Ok(FrictionEventRecord {
+                id: row.get(0)?,
+                captured_at: row.get(1)?,
+                event_id: row.get(2)?,
+                story_id: row.get(3)?,
+                trace_id: row.get(4)?,
+                friction_type: row.get(5)?,
+                severity: row.get(6)?,
+                source: row.get(7)?,
+                summary: row.get(8)?,
+                provider: row.get(9)?,
+            })
+        })?;
+
+        collect_rows(rows)
+    }
+
     fn query_stats(&self) -> Result<HarnessStats> {
         let connection = self.open_existing()?;
         connection
@@ -1926,6 +2033,30 @@ impl HarnessRepository for SqliteHarnessRepository {
                 })
             })?)?;
 
+        let mut friction_statement = connection.prepare(
+            "SELECT id, captured_at, event_id, story_id, trace_id, friction_type,
+                    severity, source, summary, provider
+             FROM friction_event
+             WHERE story_id=?1
+             ORDER BY id DESC
+             LIMIT 10;",
+        )?;
+        let friction_events =
+            collect_rows(friction_statement.query_map(params![story_id], |row| {
+                Ok(FrictionEventRecord {
+                    id: row.get(0)?,
+                    captured_at: row.get(1)?,
+                    event_id: row.get(2)?,
+                    story_id: row.get(3)?,
+                    trace_id: row.get(4)?,
+                    friction_type: row.get(5)?,
+                    severity: row.get(6)?,
+                    source: row.get(7)?,
+                    summary: row.get(8)?,
+                    provider: row.get(9)?,
+                })
+            })?)?;
+
         Ok(ContextPackData {
             story_id: story.0,
             story_title: story.1,
@@ -1942,6 +2073,7 @@ impl HarnessRepository for SqliteHarnessRepository {
             code_impact_summary,
             grounded_context,
             context_ingests,
+            friction_events,
         })
     }
 
@@ -2185,6 +2317,124 @@ fn trace_score_source_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Trac
         harness_friction: row.get(13)?,
         notes: row.get(14)?,
     })
+}
+
+fn friction_evidence_json(input: &FrictionAddInput) -> Result<Option<String>> {
+    let mut object = serde_json::Map::new();
+    if let Some(command) = &input.evidence.command {
+        object.insert(
+            "command".to_owned(),
+            serde_json::Value::String(command.clone()),
+        );
+    }
+    if let Some(exit_code) = input.evidence.exit_code {
+        object.insert(
+            "exit_code".to_owned(),
+            serde_json::Value::Number(exit_code.into()),
+        );
+    }
+    if let Some(path) = &input.evidence.artifact_path {
+        object.insert(
+            "artifact_path".to_owned(),
+            serde_json::Value::String(path.clone()),
+        );
+    }
+    if let Some(path) = &input.evidence.report_path {
+        object.insert(
+            "report_path".to_owned(),
+            serde_json::Value::String(path.clone()),
+        );
+    }
+    if let Some(details) = &input.evidence.details {
+        object.insert(
+            "details".to_owned(),
+            serde_json::Value::String(details.clone()),
+        );
+    }
+    if let Some(trace_id) = input.trace_id {
+        object.insert(
+            "trace_id".to_owned(),
+            serde_json::Value::Number(trace_id.into()),
+        );
+    }
+    if object.is_empty() {
+        return Ok(None);
+    }
+    serde_json::to_string(&object)
+        .map(Some)
+        .map_err(|error| HarnessInfraError::InvalidFrictionEvent(error.to_string()))
+}
+
+fn proposed_action_json(input: &FrictionAddInput) -> Result<Option<String>> {
+    let has_action = input.proposed_action.action_type.is_some()
+        || input.proposed_action.title.is_some()
+        || input.proposed_action.target_path.is_some();
+    if !has_action {
+        return Ok(None);
+    }
+    let Some(action_type) = input.proposed_action.action_type else {
+        return Err(HarnessInfraError::InvalidFrictionEvent(
+            "proposed action requires --proposed-action".to_owned(),
+        ));
+    };
+
+    let mut object = serde_json::Map::new();
+    object.insert(
+        "action_type".to_owned(),
+        serde_json::Value::String(action_type.as_db_value().to_owned()),
+    );
+    if let Some(title) = &input.proposed_action.title {
+        object.insert("title".to_owned(), serde_json::Value::String(title.clone()));
+    }
+    if let Some(target_path) = &input.proposed_action.target_path {
+        object.insert(
+            "target_path".to_owned(),
+            serde_json::Value::String(target_path.clone()),
+        );
+    }
+
+    serde_json::to_string(&object)
+        .map(Some)
+        .map_err(|error| HarnessInfraError::InvalidFrictionEvent(error.to_string()))
+}
+
+fn generated_friction_event_id(input: &FrictionAddInput) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .to_string();
+    let mut hasher = Sha256::new();
+    hasher.update(now.as_bytes());
+    hasher.update(std::process::id().to_string().as_bytes());
+    hasher.update(input.summary.as_bytes());
+    if let Some(story_id) = &input.story_id {
+        hasher.update(story_id.as_bytes());
+    }
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
+    )
 }
 
 fn markdown_table_fields(line: &str) -> Vec<String> {
@@ -4728,12 +4978,14 @@ mod tests {
     use super::*;
     use crate::application::{
         BacklogAddInput, BacklogCloseInput, CodeGraphImpactInput, ContextIngestInput,
-        DecisionAddInput, HarnessContext, HarnessService, IntakeInput, NotebookBriefInput,
-        ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, TraceInput,
+        DecisionAddInput, FrictionAddInput, FrictionEvidenceInput, FrictionProposedActionInput,
+        HarnessContext, HarnessService, IntakeInput, NotebookBriefInput, ReleaseVerifyInput,
+        StoryAddInput, StoryUpdateInput, TraceInput,
     };
     use crate::domain::{
         BacklogFilter, BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList,
-        InputType, RiskLane, TraceQualityTier,
+        FrictionActionType, FrictionSeverity, FrictionSource, FrictionType, InputType, RiskLane,
+        TraceQualityTier,
     };
 
     fn test_repository() -> (TempDir, SqliteHarnessRepository) {
@@ -4920,7 +5172,7 @@ mod tests {
         assert_eq!(repository.query_stats().unwrap().intakes, 0);
         let connection = repository.open_existing().unwrap();
         let schema_version = SqliteHarnessRepository::schema_version(&connection).unwrap();
-        assert_eq!(schema_version, 6);
+        assert_eq!(schema_version, 7);
         let story_columns = story_columns(&connection);
         assert!(story_columns.contains(&"verify_command".to_owned()));
         assert!(story_columns.contains(&"last_verified_at".to_owned()));
@@ -4952,6 +5204,17 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ingest_table_exists, 1);
+        let friction_event_table_exists = connection
+            .query_row(
+                "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type='table' AND name='friction_event'
+             );",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(friction_event_table_exists, 1);
     }
 
     #[test]
@@ -4964,11 +5227,11 @@ mod tests {
         let result = repository.migrate().unwrap();
 
         assert_eq!(result.current_version, 1);
-        assert_eq!(result.applied, vec![2, 3, 4, 5, 6]);
+        assert_eq!(result.applied, vec![2, 3, 4, 5, 6, 7]);
         let connection = repository.open_existing().unwrap();
         assert_eq!(
             SqliteHarnessRepository::schema_version(&connection).unwrap(),
-            6
+            7
         );
         let story_columns = story_columns(&connection);
         assert!(story_columns.contains(&"verify_command".to_owned()));
@@ -4979,6 +5242,17 @@ mod tests {
         assert!(story_columns.contains(&"release_proof_required".to_owned()));
         assert!(story_columns.contains(&"codegraph_ingest_required".to_owned()));
         assert!(story_columns.contains(&"notebooklm_ingest_required".to_owned()));
+        let friction_event_table_exists = connection
+            .query_row(
+                "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type='table' AND name='friction_event'
+             );",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(friction_event_table_exists, 1);
     }
 
     #[test]
@@ -5961,6 +6235,162 @@ mod tests {
         assert_eq!(friction[0].input_type, None);
         assert_eq!(friction[1].risk_lane.as_deref(), Some("normal"));
         assert_eq!(friction[1].input_type.as_deref(), Some("change_request"));
+    }
+
+    #[test]
+    fn structured_friction_capture_validates_queries_and_renders_context() {
+        let (temp_dir, repo_root, repository) = context_test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-FRIC", 0, 0);
+        let trace_id = repository
+            .record_trace(TraceInput {
+                task_summary: "Trace with typed friction".to_owned(),
+                intake_id: None,
+                story_id: Some("US-FRIC".to_owned()),
+                agent: Some("codex".to_owned()),
+                outcome: Some("completed".to_owned()),
+                duration_seconds: None,
+                token_estimate: None,
+                friction: Some("Provider proof missing".to_owned()),
+                notes: None,
+                actions: CsvList::from_optional(Some("captured friction".to_owned())),
+                files_read: CsvList::from_optional(Some("docs/FRICTION_TAXONOMY.md".to_owned())),
+                files_changed: CsvList::from_optional(None),
+                decisions: CsvList::from_optional(Some(
+                    "kept provider outage inconclusive".to_owned(),
+                )),
+                errors: CsvList::from_optional(Some("none".to_owned())),
+            })
+            .unwrap();
+
+        let mut valid = FrictionAddInput {
+            event_id: Some("11111111-1111-4111-8111-111111111111".to_owned()),
+            story_id: Some("US-FRIC".to_owned()),
+            trace_id: Some(trace_id),
+            friction_type: FrictionType::ProviderUnavailable,
+            severity: FrictionSeverity::High,
+            source: FrictionSource::Trace,
+            summary: "NotebookLM profile was unavailable during proof capture.".to_owned(),
+            observed_at: Some("2026-06-07T00:00:00Z".to_owned()),
+            provider: Some("notebooklm-mcp-cli".to_owned()),
+            affected_paths: CsvList::from_optional(Some(
+                "docs/stories/US-026/validation.md".to_owned(),
+            )),
+            evidence: FrictionEvidenceInput {
+                command: Some("nlm login --check".to_owned()),
+                exit_code: Some(1),
+                artifact_path: None,
+                report_path: None,
+                details: Some("Profile not found: default".to_owned()),
+            },
+            proposed_action: FrictionProposedActionInput {
+                action_type: Some(FrictionActionType::ProviderPreflight),
+                title: Some("Add NotebookLM provider preflight".to_owned()),
+                target_path: Some("docs/stories/US-030/overview.md".to_owned()),
+            },
+            notes: Some("Captured by US-030 structured friction test.".to_owned()),
+        };
+
+        let mut missing_provider = valid;
+        missing_provider.event_id = Some("22222222-2222-4222-8222-222222222222".to_owned());
+        missing_provider.provider = None;
+        assert!(repository
+            .add_friction_event(missing_provider)
+            .unwrap_err()
+            .to_string()
+            .contains("requires --provider"));
+
+        let missing_evidence = FrictionAddInput {
+            event_id: Some("33333333-3333-4333-8333-333333333333".to_owned()),
+            story_id: Some("US-FRIC".to_owned()),
+            trace_id: None,
+            friction_type: FrictionType::WeakValidation,
+            severity: FrictionSeverity::High,
+            source: FrictionSource::Agent,
+            summary: "Validation was too weak for a high-risk task.".to_owned(),
+            observed_at: Some("2026-06-07T00:00:00Z".to_owned()),
+            provider: None,
+            affected_paths: CsvList::from_optional(None),
+            evidence: FrictionEvidenceInput::default(),
+            proposed_action: FrictionProposedActionInput::default(),
+            notes: None,
+        };
+        assert!(repository
+            .add_friction_event(missing_evidence)
+            .unwrap_err()
+            .to_string()
+            .contains("high severity requires evidence"));
+
+        let invalid_observed_at = FrictionAddInput {
+            event_id: Some("44444444-4444-4444-8444-444444444444".to_owned()),
+            story_id: Some("US-FRIC".to_owned()),
+            trace_id: None,
+            friction_type: FrictionType::WeakValidation,
+            severity: FrictionSeverity::Medium,
+            source: FrictionSource::Agent,
+            summary: "Validation date was malformed.".to_owned(),
+            observed_at: Some("not-a-date".to_owned()),
+            provider: None,
+            affected_paths: CsvList::from_optional(None),
+            evidence: FrictionEvidenceInput::default(),
+            proposed_action: FrictionProposedActionInput::default(),
+            notes: None,
+        };
+        assert!(repository
+            .add_friction_event(invalid_observed_at)
+            .unwrap_err()
+            .to_string()
+            .contains("observed_at must be RFC 3339"));
+
+        valid = FrictionAddInput {
+            event_id: Some("11111111-1111-4111-8111-111111111111".to_owned()),
+            story_id: Some("US-FRIC".to_owned()),
+            trace_id: Some(trace_id),
+            friction_type: FrictionType::ProviderUnavailable,
+            severity: FrictionSeverity::High,
+            source: FrictionSource::Trace,
+            summary: "NotebookLM profile was unavailable during proof capture.".to_owned(),
+            observed_at: Some("2026-06-07T00:00:00Z".to_owned()),
+            provider: Some("notebooklm-mcp-cli".to_owned()),
+            affected_paths: CsvList::from_optional(Some(
+                "docs/stories/US-026/validation.md".to_owned(),
+            )),
+            evidence: FrictionEvidenceInput {
+                command: Some("nlm login --check".to_owned()),
+                exit_code: Some(1),
+                artifact_path: None,
+                report_path: None,
+                details: Some("Profile not found: default".to_owned()),
+            },
+            proposed_action: FrictionProposedActionInput {
+                action_type: Some(FrictionActionType::ProviderPreflight),
+                title: Some("Add NotebookLM provider preflight".to_owned()),
+                target_path: Some("docs/stories/US-030/overview.md".to_owned()),
+            },
+            notes: Some("Captured by US-030 structured friction test.".to_owned()),
+        };
+        let event_id = repository.add_friction_event(valid).unwrap();
+        assert_eq!(event_id, 1);
+        let events = repository.query_friction_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].friction_type, "provider_unavailable");
+        assert_eq!(events[0].severity, "high");
+        assert_eq!(events[0].provider.as_deref(), Some("notebooklm-mcp-cli"));
+
+        let service = HarnessService::new(HarnessContext {
+            repo_root: repo_root.clone(),
+            db_path: temp_dir.path().join("harness.db"),
+            schema_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .ancestors()
+                .nth(2)
+                .unwrap()
+                .join("scripts/schema"),
+        });
+        let pack = service.generate_context_pack("US-FRIC").unwrap();
+        let content = fs::read_to_string(pack).unwrap();
+        assert!(content.contains("## 7. Structured Friction Events"));
+        assert!(content.contains("provider_unavailable"));
+        assert!(content.contains("notebooklm-mcp-cli"));
     }
 
     #[test]

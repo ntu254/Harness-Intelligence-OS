@@ -2,9 +2,10 @@ use std::path::PathBuf;
 
 use crate::domain::{
     ArchitectureCheckResult, BacklogFilter, BacklogRecord, BoolFlag, CodeGraphMode,
-    ContextIngestReport, ContextSource, CsvList, DecisionRecord, FrictionRecord, HarnessStats,
-    InputType, IntakeRecord, MappedContext, ReleaseVerificationReport, RiskLane, StoryGateResult,
-    StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
+    ContextIngestReport, ContextSource, CsvList, DecisionRecord, FrictionActionType,
+    FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionSource, FrictionType,
+    HarnessStats, InputType, IntakeRecord, MappedContext, ReleaseVerificationReport, RiskLane,
+    StoryGateResult, StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
 };
 use crate::infrastructure::{HarnessRepository, SqliteHarnessRepository};
 
@@ -46,6 +47,7 @@ pub struct ContextPackData {
     pub code_impact_summary: Option<String>,
     pub grounded_context: Option<String>,
     pub context_ingests: Vec<ContextIngestSummary>,
+    pub friction_events: Vec<FrictionEventRecord>,
 }
 
 #[derive(Debug)]
@@ -203,6 +205,39 @@ pub struct TraceInput {
     pub errors: CsvList,
 }
 
+#[derive(Debug)]
+pub struct FrictionAddInput {
+    pub event_id: Option<String>,
+    pub story_id: Option<String>,
+    pub trace_id: Option<i64>,
+    pub friction_type: FrictionType,
+    pub severity: FrictionSeverity,
+    pub source: FrictionSource,
+    pub summary: String,
+    pub observed_at: Option<String>,
+    pub provider: Option<String>,
+    pub affected_paths: CsvList,
+    pub evidence: FrictionEvidenceInput,
+    pub proposed_action: FrictionProposedActionInput,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct FrictionEvidenceInput {
+    pub command: Option<String>,
+    pub exit_code: Option<i64>,
+    pub artifact_path: Option<String>,
+    pub report_path: Option<String>,
+    pub details: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct FrictionProposedActionInput {
+    pub action_type: Option<FrictionActionType>,
+    pub title: Option<String>,
+    pub target_path: Option<String>,
+}
+
 pub struct HarnessService {
     repository: SqliteHarnessRepository,
 }
@@ -313,6 +348,13 @@ impl HarnessService {
         self.repository.record_trace(input)
     }
 
+    pub fn add_friction_event(
+        &self,
+        input: FrictionAddInput,
+    ) -> crate::infrastructure::Result<i64> {
+        self.repository.add_friction_event(input)
+    }
+
     pub fn score_trace(&self, id: Option<i64>) -> crate::infrastructure::Result<TraceScoreResult> {
         self.repository.score_trace(id)
     }
@@ -349,6 +391,10 @@ impl HarnessService {
 
     pub fn query_friction(&self) -> crate::infrastructure::Result<Vec<FrictionRecord>> {
         self.repository.query_friction()
+    }
+
+    pub fn query_friction_events(&self) -> crate::infrastructure::Result<Vec<FrictionEventRecord>> {
+        self.repository.query_friction_events()
     }
 
     pub fn query_stats(&self) -> crate::infrastructure::Result<HarnessStats> {
@@ -456,6 +502,30 @@ impl HarnessService {
                 }
                 if let Some(failure) = &ingest.failure {
                     markdown.push_str(&format!("    * Diagnostics: {}\n", failure));
+                }
+            }
+        }
+        markdown.push('\n');
+
+        markdown.push_str("## 7. Structured Friction Events\n");
+        if data.friction_events.is_empty() {
+            markdown.push_str("*No structured friction events captured for this story.*\n");
+        } else {
+            for event in &data.friction_events {
+                markdown.push_str(&format!(
+                    "*   **{}:** {} severity `{}` from `{}` (event `{}`, captured {})\n",
+                    event.friction_type,
+                    event.summary,
+                    event.severity,
+                    event.source,
+                    event.event_id,
+                    event.captured_at
+                ));
+                if let Some(trace_id) = event.trace_id {
+                    markdown.push_str(&format!("    * Trace: #{}\n", trace_id));
+                }
+                if let Some(provider) = &event.provider {
+                    markdown.push_str(&format!("    * Provider: {}\n", provider));
                 }
             }
         }

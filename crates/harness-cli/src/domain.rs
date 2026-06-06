@@ -14,6 +14,14 @@ pub enum ParseHarnessValueError {
     ContextSource(String),
     #[error("unknown CodeGraph mode '{0}'. Use: changed-files or symbol")]
     CodeGraphMode(String),
+    #[error("unknown friction type '{0}'. Use a type from docs/FRICTION_TAXONOMY.md")]
+    FrictionType(String),
+    #[error("unknown friction severity '{0}'. Use: low, medium, or high")]
+    FrictionSeverity(String),
+    #[error("unknown friction source '{0}'. Use: trace, agent, review, workflow, or provider")]
+    FrictionSource(String),
+    #[error("unknown friction action type '{0}'. Use: backlog, rule-proposal, docs-update, provider-preflight, or none")]
+    FrictionActionType(String),
     #[error("{0} must be an integer")]
     Integer(String),
     #[error("{0} must be 0 or 1. Example: --unit 1 --integration 1 --e2e 0 --platform 0")]
@@ -93,6 +101,153 @@ impl FromStr for RiskLane {
 
 pub const RISK_LANE_HELP: &str =
     "Accepted lanes: tiny, normal, high-risk. Use tiny instead of low.";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrictionType {
+    MissingContext,
+    AmbiguousPolicy,
+    WeakValidation,
+    ProviderUnavailable,
+    SchemaGap,
+    ReleaseGap,
+    ArchitectureRuleGap,
+    RepeatedManualStep,
+}
+
+impl FrictionType {
+    pub fn as_db_value(&self) -> &'static str {
+        match self {
+            Self::MissingContext => "missing_context",
+            Self::AmbiguousPolicy => "ambiguous_policy",
+            Self::WeakValidation => "weak_validation",
+            Self::ProviderUnavailable => "provider_unavailable",
+            Self::SchemaGap => "schema_gap",
+            Self::ReleaseGap => "release_gap",
+            Self::ArchitectureRuleGap => "architecture_rule_gap",
+            Self::RepeatedManualStep => "repeated_manual_step",
+        }
+    }
+}
+
+impl FromStr for FrictionType {
+    type Err = ParseHarnessValueError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match normalize_token(value).as_str() {
+            "missing_context" => Ok(Self::MissingContext),
+            "ambiguous_policy" => Ok(Self::AmbiguousPolicy),
+            "weak_validation" => Ok(Self::WeakValidation),
+            "provider_unavailable" => Ok(Self::ProviderUnavailable),
+            "schema_gap" => Ok(Self::SchemaGap),
+            "release_gap" => Ok(Self::ReleaseGap),
+            "architecture_rule_gap" => Ok(Self::ArchitectureRuleGap),
+            "repeated_manual_step" => Ok(Self::RepeatedManualStep),
+            _ => Err(ParseHarnessValueError::FrictionType(value.to_owned())),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrictionSeverity {
+    Low,
+    Medium,
+    High,
+}
+
+impl FrictionSeverity {
+    pub fn as_db_value(&self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
+impl FromStr for FrictionSeverity {
+    type Err = ParseHarnessValueError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match normalize_token(value).as_str() {
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            _ => Err(ParseHarnessValueError::FrictionSeverity(value.to_owned())),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrictionSource {
+    Trace,
+    Agent,
+    Review,
+    Workflow,
+    Provider,
+}
+
+impl FrictionSource {
+    pub fn as_db_value(&self) -> &'static str {
+        match self {
+            Self::Trace => "trace",
+            Self::Agent => "agent",
+            Self::Review => "review",
+            Self::Workflow => "workflow",
+            Self::Provider => "provider",
+        }
+    }
+}
+
+impl FromStr for FrictionSource {
+    type Err = ParseHarnessValueError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match normalize_token(value).as_str() {
+            "trace" => Ok(Self::Trace),
+            "agent" => Ok(Self::Agent),
+            "review" => Ok(Self::Review),
+            "workflow" => Ok(Self::Workflow),
+            "provider" => Ok(Self::Provider),
+            _ => Err(ParseHarnessValueError::FrictionSource(value.to_owned())),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrictionActionType {
+    Backlog,
+    RuleProposal,
+    DocsUpdate,
+    ProviderPreflight,
+    None,
+}
+
+impl FrictionActionType {
+    pub fn as_db_value(&self) -> &'static str {
+        match self {
+            Self::Backlog => "backlog",
+            Self::RuleProposal => "rule_proposal",
+            Self::DocsUpdate => "docs_update",
+            Self::ProviderPreflight => "provider_preflight",
+            Self::None => "none",
+        }
+    }
+}
+
+impl FromStr for FrictionActionType {
+    type Err = ParseHarnessValueError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match normalize_token(value).as_str() {
+            "backlog" => Ok(Self::Backlog),
+            "rule_proposal" => Ok(Self::RuleProposal),
+            "docs_update" => Ok(Self::DocsUpdate),
+            "provider_preflight" => Ok(Self::ProviderPreflight),
+            "none" => Ok(Self::None),
+            _ => Err(ParseHarnessValueError::FrictionActionType(value.to_owned())),
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct IntakeRecord {
@@ -375,6 +530,20 @@ pub struct FrictionRecord {
     pub input_type: Option<String>,
     pub task_summary: String,
     pub harness_friction: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct FrictionEventRecord {
+    pub id: i64,
+    pub captured_at: String,
+    pub event_id: String,
+    pub story_id: Option<String>,
+    pub trace_id: Option<i64>,
+    pub friction_type: String,
+    pub severity: String,
+    pub source: String,
+    pub summary: String,
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -719,6 +888,33 @@ mod tests {
     #[test]
     fn parses_high_risk_lane_alias() {
         assert_eq!("high-risk".parse::<RiskLane>().unwrap(), RiskLane::HighRisk);
+    }
+
+    #[test]
+    fn parses_friction_taxonomy_aliases() {
+        assert_eq!(
+            "provider-unavailable".parse::<FrictionType>().unwrap(),
+            FrictionType::ProviderUnavailable
+        );
+        assert_eq!(
+            "architecture rule gap".parse::<FrictionType>().unwrap(),
+            FrictionType::ArchitectureRuleGap
+        );
+        assert_eq!(
+            "HIGH".parse::<FrictionSeverity>().unwrap(),
+            FrictionSeverity::High
+        );
+        assert_eq!(
+            "workflow".parse::<FrictionSource>().unwrap(),
+            FrictionSource::Workflow
+        );
+        assert_eq!(
+            "provider-preflight".parse::<FrictionActionType>().unwrap(),
+            FrictionActionType::ProviderPreflight
+        );
+        assert!("unknown".parse::<FrictionType>().is_err());
+        assert!("urgent".parse::<FrictionSeverity>().is_err());
+        assert!("chat".parse::<FrictionSource>().is_err());
     }
 
     #[test]

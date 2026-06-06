@@ -25,6 +25,7 @@ rule-improvement work.
 ## Required Event Fields
 
 Structured friction events use `docs/schemas/friction-event.schema.json`.
+Capture durable events with `harness-cli friction add`.
 
 Required fields:
 
@@ -71,7 +72,7 @@ trace/friction note
 - Friction events do not automatically change policy.
 - Provider unavailability remains inconclusive, never pass.
 - Runtime artifacts can be ignored by git; durable summaries belong in SQLite
-  only after an implementation story adds capture.
-- US-029 defines the taxonomy and schema only.
-- US-030 is responsible for durable structured friction capture.
+  when captured by `harness-cli friction add`.
+- US-029 defines the taxonomy and schema.
+- US-030 adds durable structured friction capture.
 - US-031 and US-032 are responsible for suggestions.

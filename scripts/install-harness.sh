@@ -826,6 +826,7 @@ docs/HARNESS.md
 docs/HARNESS_BACKLOG.md
 docs/HARNESS_COMPONENTS.md
 docs/HARNESS_MATURITY.md
+docs/FRICTION_TAXONOMY.md
 docs/README.md
 docs/TEST_MATRIX.md
 docs/TRACE_SPEC.md
@@ -838,8 +839,10 @@ docs/decisions/0006-phase-4-benchmark-triage.md
 docs/decisions/0007-hi-os-verification-gate.md
 docs/decisions/0008-canonical-public-release-origin.md
 docs/decisions/0009-release-verification-evidence-storage.md
+docs/decisions/0011-harness-friction-taxonomy.md
 docs/decisions/README.md
 docs/product/README.md
+docs/schemas/friction-event.schema.json
 docs/stories/README.md
 docs/stories/backlog.md
 docs/templates/decision.md
@@ -857,6 +860,7 @@ scripts/schema/003-hi-os.sql
 scripts/schema/004-verification-gate.sql
 scripts/schema/005-release-verification.sql
 scripts/schema/006-context-ingest.sql
+scripts/schema/007-friction-events.sql
 harness-architecture.toml
 harness-release.toml
 .gitignore
