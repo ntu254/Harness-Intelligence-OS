@@ -232,3 +232,17 @@ native hosted runners, and upload these release assets:
 - `harness-cli-linux-arm64.sha256`
 - `harness-cli-windows-x64.exe`
 - `harness-cli-windows-x64.exe.sha256`
+
+## MCP Artifact Contract Verification
+
+US-023 defines the versioned file boundary for future MCP adapters. Validate
+the three Draft 2020-12 schemas and their semantic fixtures with:
+
+```bash
+python -m pip install -r scripts/requirements-contracts.txt
+python scripts/verify-mcp-artifact-contracts.py
+```
+
+This verifier does not call an MCP provider or ingest data. It checks only the
+tracked artifact contracts and representative pass, fail, and inconclusive
+states.

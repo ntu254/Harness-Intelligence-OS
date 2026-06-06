@@ -132,6 +132,18 @@ unknown input
   -> domain object/value object
 ```
 
+External intelligence follows the same rule:
+
+```text
+MCP provider
+  -> versioned file artifact
+  -> Harness schema and semantic validation
+  -> mapped context
+  -> durable summary and governance use
+```
+
+MCP providers and adapters must not write directly into Harness SQLite.
+
 Inner layers should work with meaningful product types such as `UserId`,
 `AccountId`, `WorkspaceId`, `Role`, `DateRange`, or domain-specific IDs,
 rather than repeatedly validating raw strings.

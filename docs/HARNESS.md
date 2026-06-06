@@ -98,6 +98,12 @@ that explicitly require release proof, run `harness-cli release verify
 and the blocking story gate. Network availability failures are inconclusive
 and never count as passing evidence.
 
+Real MCP integrations use the file-based boundary accepted in Decision `0010`.
+Providers produce versioned CodeGraph or NotebookLM artifacts; Harness owns
+validation, mapping, and durable ingestion. Provider unavailability is
+`inconclusive`, not an empty successful context. US-023 defines the contracts;
+the future `context ingest` command is not implemented yet.
+
 This separation keeps policy docs stable and human-readable while giving agents
 a structured, queryable record of operational state. It also prepares the
 harness for future observability and automated evolution without adding more

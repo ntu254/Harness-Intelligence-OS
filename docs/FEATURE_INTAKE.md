@@ -67,6 +67,21 @@ Nested CodeGraph reports are unsupported input rather than complete impact
 evidence. Risk detection uses normalized path segments, so names such as
 `author` do not count as `auth`.
 
+## MCP Artifact Boundary
+
+HI-OS v0.4 defines the future real-provider boundary as versioned JSON files:
+
+- `docs/schemas/codegraph-impact.schema.json`
+- `docs/schemas/notebooklm-brief.schema.json`
+- `docs/schemas/context-ingest-result.schema.json`
+
+MCP tools do not write directly to Harness SQLite. A future `context ingest`
+command will validate the provider artifact, verify provenance and semantic
+links, map accepted fields, and emit an auditable ingest result. `fail` and
+`inconclusive` artifacts never count as successful intake or governance
+evidence. The current `intake --auto` flags remain unchanged until that command
+is implemented.
+
 ## Lanes
 
 ### Tiny

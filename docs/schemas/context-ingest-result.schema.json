@@ -1,0 +1,313 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ntu254/Harness-Intelligence-OS/blob/main/docs/schemas/context-ingest-result.schema.json",
+  "title": "HI-OS Context Ingest Result",
+  "description": "Versioned result emitted by Harness after validating an external intelligence artifact.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "ingest_id",
+    "story_id",
+    "source",
+    "source_artifact",
+    "status",
+    "checked_at",
+    "governance"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "artifact_type": {
+      "const": "context-ingest-result"
+    },
+    "ingest_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "story_id": {
+      "type": "string",
+      "pattern": "^US-[0-9]{3,}$"
+    },
+    "source": {
+      "enum": [
+        "codegraph",
+        "notebooklm"
+      ]
+    },
+    "source_artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_type",
+        "artifact_id",
+        "schema_version",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "artifact_type": {
+          "enum": [
+            "codegraph-impact",
+            "notebooklm-brief"
+          ]
+        },
+        "artifact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "schema_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "pass",
+        "fail",
+        "inconclusive"
+      ]
+    },
+    "checked_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "mapped_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "risk_flags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "auth",
+              "authorization",
+              "data_model",
+              "audit_security",
+              "external_systems",
+              "public_contracts",
+              "cross_platform",
+              "existing_behavior",
+              "weak_proof",
+              "multi_domain"
+            ]
+          }
+        },
+        "affected_files": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "affected_docs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "code_impact_summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "grounded_context": {
+          "type": "string",
+          "minLength": 1
+        },
+        "claim_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "eligible_for_intake",
+        "eligible_for_context_pack",
+        "eligible_for_story_verify"
+      ],
+      "properties": {
+        "eligible_for_intake": {
+          "type": "boolean"
+        },
+        "eligible_for_context_pack": {
+          "type": "boolean"
+        },
+        "eligible_for_story_verify": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "pass"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "mapped_context"
+        ],
+        "properties": {
+          "governance": {
+            "properties": {
+              "eligible_for_intake": {
+                "const": true
+              },
+              "eligible_for_context_pack": {
+                "const": true
+              },
+              "eligible_for_story_verify": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "fail",
+              "inconclusive"
+            ]
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "diagnostics"
+        ],
+        "not": {
+          "required": [
+            "mapped_context"
+          ]
+        },
+        "properties": {
+          "governance": {
+            "properties": {
+              "eligible_for_intake": {
+                "const": false
+              },
+              "eligible_for_context_pack": {
+                "const": false
+              },
+              "eligible_for_story_verify": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "codegraph"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "then": {
+        "properties": {
+          "source_artifact": {
+            "properties": {
+              "artifact_type": {
+                "const": "codegraph-impact"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "notebooklm"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "then": {
+        "properties": {
+          "source_artifact": {
+            "properties": {
+              "artifact_type": {
+                "const": "notebooklm-brief"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
