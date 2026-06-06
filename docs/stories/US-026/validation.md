@@ -68,7 +68,43 @@ harness-cli story verify US-026
 
 ## Acceptance Evidence
 
-Evidence is added after implementation and verification.
+Design-review evidence:
+
+- Default provider contract accepted for implementation planning:
+  `notebooklm-mcp-cli`.
+- Default invocation boundary: local CLI executable `nlm`.
+- Optional MCP boundary: `notebooklm-mcp`.
+- Authentication/session behavior: interactive Google session managed by the
+  provider and external to Harness.
+- Harness storage rule: no Google credentials, cookies, browser profiles,
+  tokens, or provider session files may be stored by Harness.
+- Raw provider response must be captured or referenced safely before
+  normalization.
+- Normalized artifacts must preserve the US-023 schema shape using
+  `provenance.sources[]` and `brief.claims[].citations[]`.
+- NotebookLM summaries without claim-level citations are not grounded evidence.
+
+Implementation evidence is added after provider invocation, adapter generation,
+US-024 ingest, context pack rendering, and story governance verification.
+
+## Failure Semantics
+
+| Condition | Required result |
+| --- | --- |
+| Provider executable missing | `inconclusive` |
+| Provider unauthenticated or expired session | `inconclusive` |
+| Notebook/source not found | `inconclusive` |
+| Network unavailable | `inconclusive` |
+| Provider timeout | `inconclusive` |
+| Permission denied | `inconclusive` |
+| Provider returns insufficient evidence | `inconclusive` |
+| Raw response cannot be parsed | `fail` |
+| Artifact is schema invalid | `fail` |
+| Missing required provenance | `fail` |
+| Missing source hash or hash mismatch | `fail` |
+| Summary or claim lacks citations | `fail` |
+| Citation references unknown source | `fail` |
+| Valid cited artifact ingests through US-024 | `pass` |
 
 ## Planning Evidence
 
@@ -79,5 +115,10 @@ Evidence is added after implementation and verification.
 - Context pack: `.harness/context/US-026-context.md`.
 - Architecture check: passed during story creation.
 - Planning trace: `#19`, Detailed `3/3`.
+- Provider contract design-review trace: `#20`, Detailed `3/3`.
 - Decision 0010 remains the governing file-based boundary.
-- Provider contract is intentionally pending.
+- Provider contract: accepted for implementation planning.
+- Default provider: `notebooklm-mcp-cli`.
+- Alternate provider candidate: `PleasePrompto/notebooklm-mcp`.
+- Story remains Planned until the accepted provider path is exercised locally
+  and the adapter implementation starts.

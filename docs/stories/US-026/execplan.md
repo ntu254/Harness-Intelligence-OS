@@ -3,8 +3,9 @@
 ## Goal
 
 Open the NotebookLM grounded-brief adapter story with a provider-first design
-review so implementation only starts after a real invocation, session, and
-citation contract is accepted.
+review. The default provider boundary is accepted, and implementation starts
+only after a real local invocation/session path can be exercised without
+storing secrets in Harness.
 
 ## Scope
 
@@ -47,15 +48,17 @@ Hard gates:
 
 ## Work Phases
 
-1. Confirm the available NotebookLM-compatible provider, invocation protocol,
-   authentication/session requirements, and raw response shape.
-2. Define the narrow adapter command and response mapping.
-3. Verify source provenance and citation semantics.
-4. Implement provider invocation and typed normalization without SQLite access.
-5. Emit pass, fail, and inconclusive US-023 artifacts.
-6. Compose generated artifacts with US-024 ingest and context pack output.
-7. Add provenance, citation, unavailable-provider, and platform tests.
-8. Run architecture, trace, and story governance verification.
+1. Accepted: default provider is `notebooklm-mcp-cli`, invoked through local
+   CLI executable `nlm`, with optional MCP server executable `notebooklm-mcp`.
+2. Confirm a local authenticated provider session and capture or reference a
+   safe raw grounded response.
+3. Define the narrow adapter command and response mapping from observed output.
+4. Verify source provenance and citation semantics against the US-023 schema.
+5. Implement provider invocation and typed normalization without SQLite access.
+6. Emit pass, fail, and inconclusive US-023 artifacts.
+7. Compose generated artifacts with US-024 ingest and context pack output.
+8. Add provenance, citation, unavailable-provider, and platform tests.
+9. Run architecture, trace, and story governance verification.
 
 ## Stop Conditions
 
@@ -64,6 +67,11 @@ Pause for human confirmation if:
 - No real NotebookLM-compatible provider or export path is available.
 - Provider credentials or browser session data would need to be committed or
   logged.
+- Harness would need to store Google credentials, cookies, browser profiles,
+  tokens, or provider session files.
+- The provider is missing, unauthenticated, expired, network-blocked, or
+  points at a missing notebook; record `inconclusive` instead of continuing as
+  a passing proof.
 - The provider cannot expose citations for each grounded claim.
 - Raw output cannot be captured or referenced without leaking sensitive data.
 - Implementation requires direct provider-to-SQLite writes.

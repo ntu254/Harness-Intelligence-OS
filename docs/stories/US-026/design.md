@@ -39,21 +39,48 @@ allowed to map provider evidence into Harness state.
 
 ## Interface Contract
 
-Status: **Provider contract pending**.
+Status: **Provider contract accepted for implementation planning**.
 
-Implementation cannot begin until one NotebookLM-compatible boundary is
-accepted with:
+Default provider:
 
-- Provider identity and versioning.
-- Invocation mechanism: executable, MCP tool, browser automation, API, or
-  exported file.
-- Authentication/session behavior and secret-handling rules.
-- Raw response shape or export format.
-- Source provenance and hash strategy.
-- Citation format that can map each claim to a `SRC-*` source and locator.
-- Provider unavailable, permission denied, timeout, source unavailable, and
-  insufficient-evidence signals.
-- Deterministic fixtures for pass, fail, and inconclusive behavior.
+- Provider package: `notebooklm-mcp-cli`.
+- Provider boundary: local CLI first, optional MCP server second.
+- Primary executable: `nlm`.
+- Optional MCP server executable: `notebooklm-mcp`.
+- Authentication: interactive Google login/session managed by the provider.
+- Network: required for provider operations.
+- Provider state: external to Harness.
+
+Harness must not store Google credentials, cookies, browser profiles, tokens,
+or provider session files. Missing executable, missing authentication, expired
+session, missing notebook, network failure, provider timeout, permission denial,
+or insufficient provider evidence produces `inconclusive`, never `pass`.
+
+The adapter captures or references raw provider output, then normalizes it into
+the US-023 `notebooklm-brief` schema. The normalized artifact must keep the
+existing schema shape:
+
+- `schema_version`: `1.0.0`.
+- `artifact_type`: `notebooklm-brief`.
+- `provenance.provider`: `notebooklm-mcp-cli`.
+- `provenance.adapter`: `harness-cli-notebooklm`.
+- `provenance.adapter_version` and `provenance.invocation_id`.
+- `provenance.sources[]` entries with `source_id`, `title`, `uri`, `sha256`,
+  and `retrieved_at`.
+- `brief.claims[].citations[]` entries that reference a known `SRC-*` source
+  and locator.
+
+NotebookLM prose is not grounded evidence unless every material claim maps to
+a citation. Raw response that cannot be parsed, schema-invalid artifacts,
+missing provenance, missing citations, unknown cited sources, or hash mismatch
+produce `fail`.
+
+Alternate provider:
+
+- `PleasePrompto/notebooklm-mcp` remains an MCP-oriented fallback candidate
+  because it exposes NotebookLM through an MCP server with browser/session
+  management and DOM-level citations.
+- It is not the default for US-026 unless the default provider proves unusable.
 
 The anticipated Harness command shape is:
 
@@ -66,7 +93,8 @@ harness-cli notebooklm brief \
 ```
 
 Exact flags are not accepted yet. They must come from the real provider
-contract, not from an invented protocol.
+implementation pass and the observed provider response, while preserving the
+accepted trust boundary above.
 
 ## Data Model
 

@@ -11,14 +11,18 @@ governed workflow before calling `harness-cli context ingest`.
 
 ## Target Behavior
 
-A NotebookLM-compatible adapter obtains grounded context from a documented
-provider boundary, captures or references the raw response, normalizes it into
-the US-023 `notebooklm-brief` schema, and feeds that artifact through the
-existing US-024 ingest path.
+A NotebookLM-compatible adapter obtains grounded context from the accepted
+`notebooklm-mcp-cli` provider boundary, captures or references the raw response,
+normalizes it into the US-023 `notebooklm-brief` schema, and feeds that artifact
+through the existing US-024 ingest path.
 
 Only cited, provenance-backed claims can become grounded context. Provider
 unavailability, missing session/auth, insufficient citations, or ambiguous
 grounding produce non-passing evidence.
+
+Harness manages only normalized artifacts and ingest summaries. Google
+credentials, cookies, browser profiles, tokens, and provider session files stay
+outside Harness.
 
 ## Affected Users
 
