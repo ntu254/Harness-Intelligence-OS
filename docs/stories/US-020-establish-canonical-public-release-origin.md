@@ -61,3 +61,11 @@ remains a separate future story.
 - Development staging uses branches, pull requests, workflow artifacts, and
   prereleases in the same public repository.
 - No `release verify` command was implemented.
+- GitHub reports the canonical repository visibility as `PUBLIC`.
+- An unauthenticated PowerShell install from the public raw URL downloaded all
+  Harness files, downloaded `harness-cli-windows-x64.exe`, and verified its
+  SHA256 checksum.
+- The installed CLI reported `harness-cli 0.2.0`.
+- The installed CLI rendered `arch-check --help` successfully.
+- `cargo test --workspace` passed with 25 tests.
+- Bash and PowerShell installer syntax checks passed.

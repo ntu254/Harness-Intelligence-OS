@@ -8,8 +8,9 @@ enforceable governance.
 HI-OS v0.2.0 was initially released privately with verified release artifacts.
 Decision `0008` later established
 `ntu254/Harness-Intelligence-OS` as the canonical public source and release
-origin. The release assets, tag, and checksums were not changed during that
-distribution alignment.
+origin. The repository is public, and an unauthenticated Windows installation
+successfully downloaded and verified the pinned v0.2.0 CLI. The release assets,
+tag, and checksums were not changed during that distribution alignment.
 
 ## Added
 
@@ -46,9 +47,8 @@ The release workflow publishes native CLI binaries and SHA256 files for:
 
 ## Next Milestone
 
-HI-OS v0.3.0: Trusted Distribution & Evidence Trail will first establish the
-canonical public release origin. It will then verify the complete trusted
-distribution chain:
+HI-OS v0.3.0: Trusted Distribution & Evidence Trail can now verify the complete
+trusted distribution chain against the accepted canonical origin:
 
 ```text
 publish -> download -> checksum -> version -> smoke install -> evidence trail
