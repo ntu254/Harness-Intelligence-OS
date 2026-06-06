@@ -5,6 +5,8 @@
 Turn the manual HI-OS release audit into a deterministic governance command
 that verifies the trusted distribution chain and emits durable evidence.
 
+Design review status: accepted and implementation-ready.
+
 ## Scope
 
 In scope:
@@ -62,3 +64,7 @@ Pause for human confirmation if:
 - The v0.2 tag or release assets would need mutation.
 - Story governance requirements would be weakened.
 - A cross-platform execution policy cannot be defined without expanding scope.
+- The canonical origin resolved at runtime differs from decision `0008`.
+- Network or GitHub availability cannot be distinguished from a trust failure.
+- Evidence cannot be written to both the operational report and durable
+  summary without partial-state ambiguity.

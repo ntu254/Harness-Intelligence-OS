@@ -18,6 +18,23 @@ release proof should audit the canonical public v0.2.0 release.
 | Performance | Downloads are bounded to one platform binary and checksum |
 | Logs/Audit | JSON report and detailed linked trace contain all required checks |
 
+## Failure Matrix
+
+| Failure | Result | Required evidence |
+| --- | --- | --- |
+| Release tag does not exist | fail | Requested tag and HTTP/API result |
+| Platform binary is missing | fail | Expected and observed asset names |
+| Matching SHA256 asset is missing | fail | Expected checksum asset name |
+| Checksum mismatch | fail | Expected and actual SHA256 |
+| Public download is rejected | fail | URL and HTTP status when authoritative |
+| Network or GitHub is unavailable | inconclusive | Transport error and attempted URL |
+| Downloaded binary reports wrong version | fail | Expected and observed version |
+| Smoke command exits non-zero | fail | Command, exit code, output summary |
+| Runtime config origin differs from decision `0008` | fail | Canonical and configured origins |
+| Report write or SQLite summary persistence fails | fail | Target path or database error |
+
+`inconclusive` exits non-zero and never satisfies story governance.
+
 ## Fixtures
 
 - Complete ten-asset release metadata.
@@ -25,6 +42,8 @@ release proof should audit the canonical public v0.2.0 release.
 - Duplicate asset names.
 - Valid and invalid checksum files.
 - Binary process fixtures for matching version, wrong version, and smoke fail.
+- Canonical-origin mismatch fixture.
+- Transport timeout and unavailable-host fixture.
 - Temporary evidence output directory.
 
 ## Commands
@@ -56,8 +75,18 @@ Required before implementation can be marked complete:
 - Smoke command passes.
 - Evidence report is generated with `result: pass`.
 - Story governance requires passing release evidence for installer or release
-  distribution work.
+  distribution work marked `release_proof_required`.
 - Detailed trace is linked to `US-021`.
+
+## Design Review
+
+- Command contract accepted:
+  `release verify --version <version> [--origin] [--platform] [--output] [--story]`.
+- Default origin comes from tracked `harness-release.toml`.
+- Option C accepted: full JSON report plus durable SQLite summary.
+- Story governance uses an explicit durable `release_proof_required` flag.
+- Network/GitHub unavailability is `inconclusive`, not `pass`.
+- Story remains Planned until a separate implementation-start action.
 
 Planning evidence:
 

@@ -24,6 +24,16 @@ publish -> download -> checksum -> version -> smoke install -> evidence report
 The command exits non-zero on any failed trust check and writes a structured
 report for governance and audit.
 
+External availability failures are reported as `inconclusive`, never `pass`.
+Trust failures such as a missing asset, checksum mismatch, or wrong version are
+reported as `fail`.
+
+## Scope Boundary
+
+This story verifies an already-published release. It does not create tags,
+publish assets, mutate releases, change installer defaults, or redesign the
+canonical origin.
+
 ## Affected Users
 
 - AI coding agents preparing or auditing releases.
@@ -43,3 +53,4 @@ report for governance and audit.
 - Replacing GitHub Releases.
 - Adding artifact signatures or provenance attestations.
 - Verifying every platform binary by executing it on one host.
+- Treating network availability as evidence that a release is valid or invalid.
