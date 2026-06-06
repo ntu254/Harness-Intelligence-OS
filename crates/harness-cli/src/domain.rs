@@ -162,6 +162,14 @@ impl FrictionSeverity {
             Self::High => "high",
         }
     }
+
+    pub fn rank(&self) -> i64 {
+        match self {
+            Self::Low => 1,
+            Self::Medium => 2,
+            Self::High => 3,
+        }
+    }
 }
 
 impl FromStr for FrictionSeverity {
@@ -322,6 +330,17 @@ pub struct BacklogRecord {
     pub risk: Option<String>,
     pub predicted_impact: Option<String>,
     pub actual_outcome: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct BacklogSuggestionRecord {
+    pub title: String,
+    pub friction_type: String,
+    pub severity: String,
+    pub event_count: i64,
+    pub stories: String,
+    pub pain: String,
+    pub suggestion: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

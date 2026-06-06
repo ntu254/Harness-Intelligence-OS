@@ -12,21 +12,22 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::application::{
-    AutoIntakeEvidence, BacklogAddInput, BacklogCloseInput, BrownfieldImportResult,
-    CodeGraphImpactInput, CodeGraphImpactResult, ContextIngestInput, ContextIngestSummary,
-    ContextPackData, DecisionAddInput, DecisionVerifyResult, FrictionAddInput, HarnessContext,
-    InitResult, IntakeInput, MigrateResult, NotebookBriefInput, NotebookBriefResult, QueryTable,
-    ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput,
+    AutoIntakeEvidence, BacklogAddInput, BacklogCloseInput, BacklogSuggestInput,
+    BrownfieldImportResult, CodeGraphImpactInput, CodeGraphImpactResult, ContextIngestInput,
+    ContextIngestSummary, ContextPackData, DecisionAddInput, DecisionVerifyResult,
+    FrictionAddInput, HarnessContext, InitResult, IntakeInput, MigrateResult, NotebookBriefInput,
+    NotebookBriefResult, QueryTable, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput,
+    StoryVerifyResult, TraceInput,
 };
 use crate::domain::{
     normalize_token, path_has_any_segment, score_trace, ArchitectureCheckResult,
-    ArchitectureConfig, ArchitectureViolation, BacklogFilter, BacklogRecord, CodeGraphMode,
-    ContextIngestDiagnostic, ContextIngestGovernance, ContextIngestReport, ContextIngestStatus,
-    ContextSource, ContextSourceArtifact, DecisionRecord, FrictionEventRecord, FrictionRecord,
-    FrictionSeverity, FrictionType, HarnessStats, IntakeRecord, MappedContext,
-    ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig, ReleaseVerificationReport, RiskLane,
-    StoryGateResult, StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
-    TraceScoreSource,
+    ArchitectureConfig, ArchitectureViolation, BacklogFilter, BacklogRecord,
+    BacklogSuggestionRecord, CodeGraphMode, ContextIngestDiagnostic, ContextIngestGovernance,
+    ContextIngestReport, ContextIngestStatus, ContextSource, ContextSourceArtifact, DecisionRecord,
+    FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionType, HarnessStats,
+    IntakeRecord, MappedContext, ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig,
+    ReleaseVerificationReport, RiskLane, StoryGateResult, StoryMatrixRecord, StoryVerifyStatus,
+    TraceRecord, TraceScoreResult, TraceScoreSource,
 };
 
 pub type Result<T> = std::result::Result<T, HarnessInfraError>;
@@ -111,6 +112,7 @@ pub trait HarnessRepository {
     fn verify_decision(&self, id: &str) -> Result<DecisionVerifyResult>;
     fn add_backlog(&self, input: BacklogAddInput) -> Result<i64>;
     fn close_backlog(&self, input: BacklogCloseInput) -> Result<()>;
+    fn suggest_backlog(&self, input: BacklogSuggestInput) -> Result<Vec<BacklogSuggestionRecord>>;
     fn record_trace(&self, input: TraceInput) -> Result<i64>;
     fn add_friction_event(&self, input: FrictionAddInput) -> Result<i64>;
     fn score_trace(&self, id: Option<i64>) -> Result<TraceScoreResult>;
@@ -1556,6 +1558,117 @@ impl HarnessRepository for SqliteHarnessRepository {
         Ok(())
     }
 
+    fn suggest_backlog(&self, input: BacklogSuggestInput) -> Result<Vec<BacklogSuggestionRecord>> {
+        let connection = self.open_existing()?;
+        let mut statement = connection.prepare(
+            "SELECT friction_type, severity, story_id, summary,
+                    proposed_action_json, provider
+             FROM friction_event
+             ORDER BY id DESC;",
+        )?;
+        let rows = collect_rows(statement.query_map([], |row| {
+            Ok(BacklogSuggestionSource {
+                friction_type: row.get(0)?,
+                severity: row.get(1)?,
+                story_id: row.get(2)?,
+                summary: row.get(3)?,
+                proposed_action_json: row.get(4)?,
+                provider: row.get(5)?,
+            })
+        })?)?;
+
+        let mut grouped = BTreeMap::<(String, String), BacklogSuggestionAccumulator>::new();
+        let type_filter = input
+            .friction_type
+            .map(|value| value.as_db_value().to_owned());
+        let min_rank = input.min_severity.rank();
+
+        for row in rows {
+            if let Some(story_id) = &input.story_id {
+                if row.story_id.as_deref() != Some(story_id) {
+                    continue;
+                }
+            }
+            if let Some(friction_type) = &type_filter {
+                if &row.friction_type != friction_type {
+                    continue;
+                }
+            }
+            let row_rank = severity_rank(&row.severity);
+            if row_rank < min_rank {
+                continue;
+            }
+
+            let proposed = proposed_backlog_action(&row.proposed_action_json);
+            let title = proposed
+                .as_ref()
+                .and_then(|action| action.title.clone())
+                .unwrap_or_else(|| {
+                    derived_backlog_suggestion_title(
+                        &row.friction_type,
+                        &row.summary,
+                        row.provider.as_deref(),
+                    )
+                });
+            let suggestion = proposed
+                .as_ref()
+                .and_then(|action| action.target_path.as_ref())
+                .map(|target| format!("Review backlog candidate for {target}."))
+                .unwrap_or_else(|| {
+                    format!(
+                        "Create or update a backlog item for {}.",
+                        row.friction_type.replace('_', " ")
+                    )
+                });
+            let key = (title.clone(), row.friction_type.clone());
+            let entry = grouped
+                .entry(key)
+                .or_insert_with(|| BacklogSuggestionAccumulator {
+                    title,
+                    friction_type: row.friction_type.clone(),
+                    severity: row.severity.clone(),
+                    severity_rank: row_rank,
+                    event_count: 0,
+                    stories: BTreeSet::new(),
+                    pain: row.summary.clone(),
+                    suggestion,
+                });
+            entry.event_count += 1;
+            if row_rank > entry.severity_rank {
+                entry.severity = row.severity.clone();
+                entry.severity_rank = row_rank;
+            }
+            if let Some(story_id) = row.story_id {
+                entry.stories.insert(story_id);
+            }
+        }
+
+        let mut suggestions = grouped
+            .into_values()
+            .map(|entry| BacklogSuggestionRecord {
+                title: entry.title,
+                friction_type: entry.friction_type,
+                severity: entry.severity,
+                event_count: entry.event_count,
+                stories: if entry.stories.is_empty() {
+                    "-".to_owned()
+                } else {
+                    entry.stories.into_iter().collect::<Vec<_>>().join(",")
+                },
+                pain: entry.pain,
+                suggestion: entry.suggestion,
+            })
+            .collect::<Vec<_>>();
+        suggestions.sort_by(|left, right| {
+            severity_rank(&right.severity)
+                .cmp(&severity_rank(&left.severity))
+                .then_with(|| right.event_count.cmp(&left.event_count))
+                .then_with(|| left.title.cmp(&right.title))
+        });
+        suggestions.truncate(input.limit);
+        Ok(suggestions)
+    }
+
     fn record_trace(&self, input: TraceInput) -> Result<i64> {
         let connection = self.open_existing()?;
         connection.execute(
@@ -2317,6 +2430,82 @@ fn trace_score_source_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Trac
         harness_friction: row.get(13)?,
         notes: row.get(14)?,
     })
+}
+
+#[derive(Debug)]
+struct BacklogSuggestionSource {
+    friction_type: String,
+    severity: String,
+    story_id: Option<String>,
+    summary: String,
+    proposed_action_json: Option<String>,
+    provider: Option<String>,
+}
+
+#[derive(Debug)]
+struct BacklogSuggestionAccumulator {
+    title: String,
+    friction_type: String,
+    severity: String,
+    severity_rank: i64,
+    event_count: i64,
+    stories: BTreeSet<String>,
+    pain: String,
+    suggestion: String,
+}
+
+#[derive(Debug)]
+struct ProposedBacklogAction {
+    title: Option<String>,
+    target_path: Option<String>,
+}
+
+fn severity_rank(value: &str) -> i64 {
+    match value {
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
+    }
+}
+
+fn proposed_backlog_action(value: &Option<String>) -> Option<ProposedBacklogAction> {
+    let value = value.as_deref()?;
+    let object = serde_json::from_str::<serde_json::Value>(value).ok()?;
+    let object = object.as_object()?;
+    if object.get("action_type").and_then(|value| value.as_str()) != Some("backlog") {
+        return None;
+    }
+    Some(ProposedBacklogAction {
+        title: object
+            .get("title")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned),
+        target_path: object
+            .get("target_path")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned),
+    })
+}
+
+fn derived_backlog_suggestion_title(
+    friction_type: &str,
+    summary: &str,
+    provider: Option<&str>,
+) -> String {
+    match friction_type {
+        "provider_unavailable" => provider
+            .map(|value| format!("Add provider preflight for {value}"))
+            .unwrap_or_else(|| "Add provider availability preflight".to_owned()),
+        "repeated_manual_step" => "Automate repeated manual step".to_owned(),
+        "release_gap" => "Close release evidence gap".to_owned(),
+        "weak_validation" => "Strengthen validation proof".to_owned(),
+        "missing_context" => "Add missing context".to_owned(),
+        "ambiguous_policy" => "Clarify harness policy".to_owned(),
+        "schema_gap" => "Revise artifact schema".to_owned(),
+        "architecture_rule_gap" => "Update architecture rule".to_owned(),
+        _ => summary.chars().take(80).collect(),
+    }
 }
 
 fn friction_evidence_json(input: &FrictionAddInput) -> Result<Option<String>> {
@@ -4977,10 +5166,10 @@ mod tests {
 
     use super::*;
     use crate::application::{
-        BacklogAddInput, BacklogCloseInput, CodeGraphImpactInput, ContextIngestInput,
-        DecisionAddInput, FrictionAddInput, FrictionEvidenceInput, FrictionProposedActionInput,
-        HarnessContext, HarnessService, IntakeInput, NotebookBriefInput, ReleaseVerifyInput,
-        StoryAddInput, StoryUpdateInput, TraceInput,
+        BacklogAddInput, BacklogCloseInput, BacklogSuggestInput, CodeGraphImpactInput,
+        ContextIngestInput, DecisionAddInput, FrictionAddInput, FrictionEvidenceInput,
+        FrictionProposedActionInput, HarnessContext, HarnessService, IntakeInput,
+        NotebookBriefInput, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, TraceInput,
     };
     use crate::domain::{
         BacklogFilter, BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList,
@@ -6391,6 +6580,94 @@ mod tests {
         assert!(content.contains("## 7. Structured Friction Events"));
         assert!(content.contains("provider_unavailable"));
         assert!(content.contains("notebooklm-mcp-cli"));
+    }
+
+    #[test]
+    fn backlog_suggestions_group_friction_without_mutating_backlog() {
+        let (_temp_dir, repository) = test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-SUG", 0, 0);
+        repository
+            .add_backlog(BacklogAddInput {
+                title: "Existing backlog item".to_owned(),
+                discovered_while: None,
+                current_pain: None,
+                suggestion: None,
+                risk: Some(RiskLane::Normal),
+                predicted_impact: Some("Remain untouched.".to_owned()),
+                notes: None,
+            })
+            .unwrap();
+        let before = repository.query_backlog(BacklogFilter::All).unwrap();
+
+        for (index, severity) in [FrictionSeverity::High, FrictionSeverity::Medium]
+            .into_iter()
+            .enumerate()
+        {
+            repository
+                .add_friction_event(FrictionAddInput {
+                    event_id: Some(format!("55555555-5555-4555-8555-55555555555{}", index + 1)),
+                    story_id: Some("US-SUG".to_owned()),
+                    trace_id: None,
+                    friction_type: FrictionType::ReleaseGap,
+                    severity,
+                    source: FrictionSource::Agent,
+                    summary: "Installer payload needs release-hardening review.".to_owned(),
+                    observed_at: Some("2026-06-07T00:00:00Z".to_owned()),
+                    provider: None,
+                    affected_paths: CsvList::from_optional(Some(
+                        "scripts/install-harness.ps1,scripts/install-harness.sh".to_owned(),
+                    )),
+                    evidence: FrictionEvidenceInput {
+                        command: Some("harness-cli query backlog --open".to_owned()),
+                        exit_code: Some(0),
+                        artifact_path: None,
+                        report_path: None,
+                        details: Some("Backlog review remains human-owned.".to_owned()),
+                    },
+                    proposed_action: FrictionProposedActionInput {
+                        action_type: Some(FrictionActionType::Backlog),
+                        title: Some("Review installer payload for v0.5 schema docs".to_owned()),
+                        target_path: Some("docs/stories/US-033/overview.md".to_owned()),
+                    },
+                    notes: None,
+                })
+                .unwrap();
+        }
+
+        let suggestions = repository
+            .suggest_backlog(BacklogSuggestInput {
+                story_id: Some("US-SUG".to_owned()),
+                friction_type: Some(FrictionType::ReleaseGap),
+                min_severity: FrictionSeverity::Medium,
+                limit: 10,
+            })
+            .unwrap();
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(
+            suggestions[0].title,
+            "Review installer payload for v0.5 schema docs"
+        );
+        assert_eq!(suggestions[0].friction_type, "release_gap");
+        assert_eq!(suggestions[0].severity, "high");
+        assert_eq!(suggestions[0].event_count, 2);
+        assert_eq!(suggestions[0].stories, "US-SUG");
+
+        let unrelated = repository
+            .suggest_backlog(BacklogSuggestInput {
+                story_id: Some("US-SUG".to_owned()),
+                friction_type: Some(FrictionType::RepeatedManualStep),
+                min_severity: FrictionSeverity::Low,
+                limit: 10,
+            })
+            .unwrap();
+        assert!(unrelated.is_empty());
+
+        assert_eq!(
+            repository.query_backlog(BacklogFilter::All).unwrap(),
+            before
+        );
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use crate::domain::{
-    ArchitectureCheckResult, BacklogFilter, BacklogRecord, BoolFlag, CodeGraphMode,
-    ContextIngestReport, ContextSource, CsvList, DecisionRecord, FrictionActionType,
+    ArchitectureCheckResult, BacklogFilter, BacklogRecord, BacklogSuggestionRecord, BoolFlag,
+    CodeGraphMode, ContextIngestReport, ContextSource, CsvList, DecisionRecord, FrictionActionType,
     FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionSource, FrictionType,
     HarnessStats, InputType, IntakeRecord, MappedContext, ReleaseVerificationReport, RiskLane,
     StoryGateResult, StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
@@ -185,6 +185,14 @@ pub struct BacklogCloseInput {
     pub id: i64,
     pub status: String,
     pub actual_outcome: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct BacklogSuggestInput {
+    pub story_id: Option<String>,
+    pub friction_type: Option<FrictionType>,
+    pub min_severity: FrictionSeverity,
+    pub limit: usize,
 }
 
 #[derive(Debug)]
@@ -375,6 +383,13 @@ impl HarnessService {
         filter: BacklogFilter,
     ) -> crate::infrastructure::Result<Vec<BacklogRecord>> {
         self.repository.query_backlog(filter)
+    }
+
+    pub fn suggest_backlog(
+        &self,
+        input: BacklogSuggestInput,
+    ) -> crate::infrastructure::Result<Vec<BacklogSuggestionRecord>> {
+        self.repository.suggest_backlog(input)
     }
 
     pub fn query_decisions(&self) -> crate::infrastructure::Result<Vec<DecisionRecord>> {

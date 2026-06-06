@@ -60,8 +60,7 @@ Optional fields add linkage and actionability:
 ```text
 trace/friction note
   -> structured friction event
-  -> pattern detection
-  -> backlog suggestion
+  -> `harness-cli backlog suggest`
   -> rule improvement proposal
   -> human review
   -> accepted harness change
@@ -75,4 +74,5 @@ trace/friction note
   when captured by `harness-cli friction add`.
 - US-029 defines the taxonomy and schema.
 - US-030 adds durable structured friction capture.
-- US-031 and US-032 are responsible for suggestions.
+- US-031 adds read-only backlog suggestions from structured friction.
+- US-032 is responsible for rule improvement proposals.

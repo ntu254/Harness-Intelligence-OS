@@ -6,18 +6,19 @@ use clap::{Args, Parser, Subcommand};
 use thiserror::Error;
 
 use crate::application::{
-    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, CodeGraphImpactInput,
-    ContextIngestInput, DecisionAddInput, FrictionAddInput, FrictionEvidenceInput,
-    FrictionProposedActionInput, HarnessContext, HarnessService, InitResult, IntakeInput,
-    MigrateResult, NotebookBriefInput, QueryTable, ReleaseVerifyInput, StoryAddInput,
+    BacklogAddInput, BacklogCloseInput, BacklogSuggestInput, BrownfieldImportResult,
+    CodeGraphImpactInput, ContextIngestInput, DecisionAddInput, FrictionAddInput,
+    FrictionEvidenceInput, FrictionProposedActionInput, HarnessContext, HarnessService, InitResult,
+    IntakeInput, MigrateResult, NotebookBriefInput, QueryTable, ReleaseVerifyInput, StoryAddInput,
     StoryUpdateInput, TraceInput,
 };
 use crate::domain::{
     parse_optional_integer, path_has_any_segment, proof_display, BacklogFilter, BacklogRecord,
-    BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList, DecisionRecord,
-    FrictionActionType, FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionSource,
-    FrictionType, HarnessStats, InputType, IntakeRecord, MappedContext, ReleaseCheckResult,
-    RiskLane, StoryMatrixRecord, TraceQualityTier, TraceRecord, TraceScoreResult, RISK_LANE_HELP,
+    BacklogSuggestionRecord, BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList,
+    DecisionRecord, FrictionActionType, FrictionEventRecord, FrictionRecord, FrictionSeverity,
+    FrictionSource, FrictionType, HarnessStats, InputType, IntakeRecord, MappedContext,
+    ReleaseCheckResult, RiskLane, StoryMatrixRecord, TraceQualityTier, TraceRecord,
+    TraceScoreResult, RISK_LANE_HELP,
 };
 
 #[derive(Parser, Debug)]
@@ -240,6 +241,8 @@ enum BacklogAction {
     #[command(after_help = RISK_LANE_HELP)]
     Add(BacklogAddArgs),
     Close(BacklogCloseArgs),
+    /// Suggest backlog candidates from structured friction events without writing backlog rows.
+    Suggest(BacklogSuggestArgs),
 }
 
 #[derive(Args, Debug)]
@@ -268,6 +271,22 @@ struct BacklogCloseArgs {
     status: String,
     #[arg(long)]
     outcome: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct BacklogSuggestArgs {
+    #[arg(long)]
+    story: Option<String>,
+    #[arg(long = "type", value_name = "FRICTION_TYPE")]
+    friction_type: Option<String>,
+    #[arg(
+        long = "min-severity",
+        value_name = "low|medium|high",
+        default_value = "medium"
+    )]
+    min_severity: String,
+    #[arg(long, default_value = "10")]
+    limit: String,
 }
 
 #[derive(Args, Debug)]
@@ -977,6 +996,19 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                 })?;
                 println!("Backlog #{id} closed as {status}.");
             }
+            BacklogAction::Suggest(args) => {
+                let limit = parse_positive_integer("backlog suggest: --limit", &args.limit)?;
+                let suggestions = service.suggest_backlog(BacklogSuggestInput {
+                    story_id: args.story,
+                    friction_type: args
+                        .friction_type
+                        .map(|value| FrictionType::from_str(&value))
+                        .transpose()?,
+                    min_severity: FrictionSeverity::from_str(&args.min_severity)?,
+                    limit,
+                })?;
+                print_backlog_suggestions(&suggestions);
+            }
         },
         Command::Trace(args) => {
             let story_id = args.story.clone();
@@ -1180,6 +1212,19 @@ fn parse_optional_bool(
         .map_err(InterfaceError::from)
 }
 
+fn parse_positive_integer(label: &str, value: &str) -> Result<usize, InterfaceError> {
+    let parsed = value.parse::<usize>().map_err(|_| {
+        InterfaceError::InvalidNumber(format!("{label} must be a positive integer"))
+    })?;
+    if parsed > 0 {
+        Ok(parsed)
+    } else {
+        Err(InterfaceError::InvalidNumber(format!(
+            "{label} must be a positive integer"
+        )))
+    }
+}
+
 fn parse_positive_float(label: &str, value: &str) -> Result<f64, InterfaceError> {
     let parsed = value
         .parse::<f64>()
@@ -1366,6 +1411,35 @@ fn print_backlog(records: &[BacklogRecord]) {
             "risk",
             "predicted_impact",
             "actual_outcome",
+        ],
+        &rows,
+    );
+}
+
+fn print_backlog_suggestions(records: &[BacklogSuggestionRecord]) {
+    let rows = records
+        .iter()
+        .map(|record| {
+            vec![
+                record.title.clone(),
+                record.friction_type.clone(),
+                record.severity.clone(),
+                record.event_count.to_string(),
+                record.stories.clone(),
+                record.pain.clone(),
+                record.suggestion.clone(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print_table(
+        &[
+            "title",
+            "friction_type",
+            "severity",
+            "events",
+            "stories",
+            "pain",
+            "suggestion",
         ],
         &rows,
     );
@@ -1685,6 +1759,16 @@ mod tests {
             .to_string();
         assert!(backlog_add_help.contains("--risk <tiny|normal|high-risk>"));
         assert!(backlog_add_help.contains("Accepted lanes"));
+
+        let backlog_suggest_help = command
+            .find_subcommand_mut("backlog")
+            .unwrap()
+            .find_subcommand_mut("suggest")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(backlog_suggest_help.contains("--min-severity <low|medium|high>"));
+        assert!(backlog_suggest_help.contains("--type <FRICTION_TYPE>"));
 
         let friction_add_help = command
             .find_subcommand_mut("friction")

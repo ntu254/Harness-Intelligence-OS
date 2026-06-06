@@ -258,6 +258,9 @@ learning-loop work. The taxonomy gives names to repeated pain, but it does not
 automatically change policy or convert inconclusive evidence into pass.
 Use `scripts/bin/harness-cli friction add` when friction should be captured as
 durable structured evidence for later review.
+Use `scripts/bin/harness-cli backlog suggest` to review read-only backlog
+candidates from structured friction; create backlog rows explicitly with
+`backlog add` after human review.
 
 Backlog risk uses the same lane vocabulary as intake and stories:
 `tiny`, `normal`, or `high-risk`. Use `--risk tiny` for low-risk follow-up
