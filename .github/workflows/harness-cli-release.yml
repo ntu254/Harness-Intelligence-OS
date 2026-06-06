@@ -88,6 +88,7 @@ jobs:
           "dist/${{ matrix.binary }}" arch-check --help
           "dist/${{ matrix.binary }}" story verify --help
           "dist/${{ matrix.binary }}" score-trace --help
+          "dist/${{ matrix.binary }}" release verify --help
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -119,11 +120,17 @@ jobs:
 
       - name: Create release if needed
         run: |
+          version="${RELEASE_TAG#harness-cli-v}"
+          version="${version#v}"
+          notes_file="RELEASE_NOTES_v${version}.md"
+          test -f "$notes_file"
+          title="$(sed -n '1s/^# //p' "$notes_file")"
+          test -n "$title"
           gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
             gh release create "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --title "HI-OS v0.2.0: Blocking Governance Gate" \
-              --notes-file RELEASE_NOTES_v0.2.0.md
+              --title "$title" \
+              --notes-file "$notes_file"
 
       - name: Upload release assets
         run: gh release upload "$RELEASE_TAG" dist/harness-cli-* --repo "$GITHUB_REPOSITORY" --clobber
