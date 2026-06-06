@@ -17,6 +17,9 @@ scripts/bin/harness-cli arch-check --story US-001
 scripts/bin/harness-cli story verify US-001  # Run proof command and governance gate
 scripts/bin/harness-cli context ingest --story US-001 --source codegraph --file impact.json
 scripts/bin/harness-cli codegraph impact --story US-001 --mode changed-files --changed-files changed-files.txt
+scripts/bin/harness-cli friction add ... # Capture structured friction
+scripts/bin/harness-cli backlog suggest  # Suggest backlog candidates from friction
+scripts/bin/harness-cli rules suggest    # Suggest rule improvements from friction
 scripts/bin/harness-cli decision ...  # Add a decision or run its verification
 scripts/bin/harness-cli backlog ...   # Add or close a backlog item
 scripts/bin/harness-cli trace ...     # Record and auto-score an agent execution trace
@@ -69,6 +72,9 @@ scripts/bin/harness-cli decision add ...
 scripts/bin/harness-cli decision verify ...
 scripts/bin/harness-cli backlog add ...
 scripts/bin/harness-cli backlog close ...
+scripts/bin/harness-cli backlog suggest ...
+scripts/bin/harness-cli friction add ...
+scripts/bin/harness-cli rules suggest ...
 scripts/bin/harness-cli trace ...
 scripts/bin/harness-cli score-trace
 scripts/bin/harness-cli query matrix
@@ -77,8 +83,10 @@ scripts/bin/harness-cli query decisions
 scripts/bin/harness-cli query intakes
 scripts/bin/harness-cli query traces
 scripts/bin/harness-cli query friction
+scripts/bin/harness-cli query friction-events
 scripts/bin/harness-cli query stats
 scripts/bin/harness-cli query sql ...
+scripts/bin/harness-cli release verify ...
 ```
 
 `scripts/bin/harness-cli import brownfield` seeds or refreshes the durable database
@@ -141,7 +149,7 @@ By default the installer also downloads the prebuilt Rust Harness CLI for the
 current platform into `scripts/bin/harness-cli` on macOS/Linux or
 `scripts/bin/harness-cli.exe` on Windows, then verifies its `.sha256` checksum.
 A source branch can pin the release used by the installer through
-`scripts/harness-cli-release-tag`; HI-OS v0.4 pins `harness-cli-v0.4.0` so
+`scripts/harness-cli-release-tag`; HI-OS v0.5 pins `harness-cli-v0.5.0` so
 branch installs receive the trusted-distribution CLI. Set
 `HARNESS_CLI_RELEASE_TAG` to override that tag, or set
 `HARNESS_CLI_BASE_URL` to point at an alternate artifact
@@ -160,7 +168,7 @@ Verify an existing public Harness CLI release through the complete trusted
 distribution chain:
 
 ```powershell
-.\scripts\bin\harness-cli.exe release verify --version 0.4.0
+.\scripts\bin\harness-cli.exe release verify --version 0.5.0
 ```
 
 The default public origin and tag prefix come from `harness-release.toml`.

@@ -839,10 +839,14 @@ docs/decisions/0006-phase-4-benchmark-triage.md
 docs/decisions/0007-hi-os-verification-gate.md
 docs/decisions/0008-canonical-public-release-origin.md
 docs/decisions/0009-release-verification-evidence-storage.md
+docs/decisions/0010-mcp-artifact-contracts.md
 docs/decisions/0011-harness-friction-taxonomy.md
 docs/decisions/README.md
 docs/product/README.md
+docs/schemas/codegraph-impact.schema.json
+docs/schemas/context-ingest-result.schema.json
 docs/schemas/friction-event.schema.json
+docs/schemas/notebooklm-brief.schema.json
 docs/stories/README.md
 docs/stories/backlog.md
 docs/templates/decision.md
