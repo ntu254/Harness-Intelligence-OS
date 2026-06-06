@@ -149,7 +149,7 @@ By default the installer also downloads the prebuilt Rust Harness CLI for the
 current platform into `scripts/bin/harness-cli` on macOS/Linux or
 `scripts/bin/harness-cli.exe` on Windows, then verifies its `.sha256` checksum.
 A source branch can pin the release used by the installer through
-`scripts/harness-cli-release-tag`; HI-OS v0.5 pins `harness-cli-v0.5.0` so
+`scripts/harness-cli-release-tag`; HI-OS v0.6 pins `harness-cli-v0.6.0` so
 branch installs receive the trusted-distribution CLI. Set
 `HARNESS_CLI_RELEASE_TAG` to override that tag, or set
 `HARNESS_CLI_BASE_URL` to point at an alternate artifact
@@ -168,7 +168,7 @@ Verify an existing public Harness CLI release through the complete trusted
 distribution chain:
 
 ```powershell
-.\scripts\bin\harness-cli.exe release verify --version 0.5.0
+.\scripts\bin\harness-cli.exe release verify --version 0.6.0
 ```
 
 The default public origin and tag prefix come from `harness-release.toml`.
@@ -182,6 +182,16 @@ Stories opt into the blocking evidence requirement explicitly:
 
 ```powershell
 .\scripts\bin\harness-cli.exe story update --id US-021 --release-proof 1
+```
+
+## Governance Report and Dashboard
+
+Generate the v0.6 governance report and static dashboard:
+
+```powershell
+.\scripts\bin\harness-cli.exe governance report --output .harness/reports/governance-report.json
+python scripts/verify-governance-report-schema.py .harness/reports/governance-report.json
+.\scripts\bin\harness-cli.exe governance dashboard --report .harness/reports/governance-report.json --output .harness/dashboard/index.html
 ```
 
 ## Context Ingest

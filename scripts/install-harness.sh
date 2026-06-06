@@ -827,6 +827,7 @@ docs/HARNESS_BACKLOG.md
 docs/HARNESS_COMPONENTS.md
 docs/HARNESS_MATURITY.md
 docs/FRICTION_TAXONOMY.md
+docs/GOVERNANCE_REPORT.md
 docs/README.md
 docs/TEST_MATRIX.md
 docs/TRACE_SPEC.md
@@ -841,11 +842,13 @@ docs/decisions/0008-canonical-public-release-origin.md
 docs/decisions/0009-release-verification-evidence-storage.md
 docs/decisions/0010-mcp-artifact-contracts.md
 docs/decisions/0011-harness-friction-taxonomy.md
+docs/decisions/0012-governance-report-schema.md
 docs/decisions/README.md
 docs/product/README.md
 docs/schemas/codegraph-impact.schema.json
 docs/schemas/context-ingest-result.schema.json
 docs/schemas/friction-event.schema.json
+docs/schemas/governance-report.schema.json
 docs/schemas/notebooklm-brief.schema.json
 docs/stories/README.md
 docs/stories/backlog.md
@@ -858,6 +861,7 @@ docs/templates/high-risk-story/execplan.md
 docs/templates/high-risk-story/overview.md
 docs/templates/high-risk-story/validation.md
 scripts/README.md
+scripts/verify-governance-report-schema.py
 scripts/schema/001-init.sql
 scripts/schema/002-story-verify.sql
 scripts/schema/003-hi-os.sql
