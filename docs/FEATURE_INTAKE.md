@@ -87,6 +87,13 @@ The CodeGraph CLI adapter is available through `harness-cli codegraph impact`.
 It preserves the file boundary and composes with `context ingest`; it does not
 change `intake --auto` defaults.
 
+The NotebookLM grounded-brief adapter is available through `harness-cli
+notebooklm brief`. It invokes the accepted `notebooklm-mcp-cli` CLI boundary,
+normalizes only citation-backed provider output into a `notebooklm-brief`
+artifact, and composes with `context ingest`. Provider/session/network
+unavailability is inconclusive, while uncited summaries or malformed provider
+output fail and cannot satisfy governance.
+
 ## Lanes
 
 ### Tiny

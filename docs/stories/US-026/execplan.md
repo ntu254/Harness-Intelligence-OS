@@ -50,15 +50,22 @@ Hard gates:
 
 1. Accepted: default provider is `notebooklm-mcp-cli`, invoked through local
    CLI executable `nlm`, with optional MCP server executable `notebooklm-mcp`.
-2. Confirm a local authenticated provider session and capture or reference a
-   safe raw grounded response.
-3. Define the narrow adapter command and response mapping from observed output.
-4. Verify source provenance and citation semantics against the US-023 schema.
-5. Implement provider invocation and typed normalization without SQLite access.
-6. Emit pass, fail, and inconclusive US-023 artifacts.
-7. Compose generated artifacts with US-024 ingest and context pack output.
-8. Add provenance, citation, unavailable-provider, and platform tests.
-9. Run architecture, trace, and story governance verification.
+2. Implemented: `harness-cli notebooklm brief` invokes `nlm ask --json
+   --query <query>` with optional `--notebook`.
+3. Implemented: raw provider stdout/stderr is written to a raw response file
+   when available.
+4. Implemented: typed normalization maps cited provider output into the US-023
+   `notebooklm-brief` schema without SQLite access.
+5. Implemented: pass, fail, and inconclusive artifacts compose with US-024
+   ingest.
+6. Implemented: tests cover valid cited output, invalid provider JSON,
+   uncited claims, and missing provider executable.
+7. Pending live proof: confirm a local authenticated provider session and
+   capture or reference a safe raw grounded response.
+8. Pending live proof: run context pack rendering and final story governance
+   verification with valid NotebookLM evidence.
+9. Pending hardening: run the full workspace validation ladder and record final
+   trace.
 
 ## Stop Conditions
 

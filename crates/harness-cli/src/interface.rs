@@ -8,7 +8,8 @@ use thiserror::Error;
 use crate::application::{
     BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, CodeGraphImpactInput,
     ContextIngestInput, DecisionAddInput, HarnessContext, HarnessService, InitResult, IntakeInput,
-    MigrateResult, QueryTable, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, TraceInput,
+    MigrateResult, NotebookBriefInput, QueryTable, ReleaseVerifyInput, StoryAddInput,
+    StoryUpdateInput, TraceInput,
 };
 use crate::domain::{
     parse_optional_integer, path_has_any_segment, proof_display, BacklogFilter, BacklogRecord,
@@ -52,6 +53,8 @@ enum Command {
     Context(ContextArgs),
     /// Produce and ingest CodeGraph impact evidence.
     Codegraph(CodeGraphArgs),
+    /// Produce and ingest NotebookLM grounded brief evidence.
+    Notebooklm(NotebookLmArgs),
     /// Check configured architecture dependency boundaries.
     ArchCheck(ArchCheckArgs),
     /// Verify the trusted public release distribution chain.
@@ -373,6 +376,34 @@ struct CodeGraphImpactArgs {
 }
 
 #[derive(Args, Debug)]
+struct NotebookLmArgs {
+    #[command(subcommand)]
+    action: NotebookLmAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum NotebookLmAction {
+    /// Run NotebookLM provider query, normalize the grounded brief, and ingest it.
+    Brief(NotebookLmBriefArgs),
+}
+
+#[derive(Args, Debug)]
+struct NotebookLmBriefArgs {
+    #[arg(long)]
+    story: String,
+    #[arg(long)]
+    query: String,
+    #[arg(long)]
+    notebook: Option<String>,
+    #[arg(long)]
+    output: Option<PathBuf>,
+    #[arg(long = "raw-output")]
+    raw_output: Option<PathBuf>,
+    #[arg(long, default_value = "nlm")]
+    executable: String,
+}
+
+#[derive(Args, Debug)]
 struct ArchCheckArgs {
     /// Architecture rules file. Defaults to harness-architecture.toml.
     #[arg(long)]
@@ -685,6 +716,35 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                 }
                 println!(
                     "CodeGraph impact: {}",
+                    result.ingest_report.status.as_db_value()
+                );
+                if result.ingest_report.status != ContextIngestStatus::Pass {
+                    std::process::exit(1);
+                }
+            }
+        },
+        Command::Notebooklm(args) => match args.action {
+            NotebookLmAction::Brief(args) => {
+                let result = service.produce_notebook_brief(NotebookBriefInput {
+                    story_id: args.story,
+                    query: args.query,
+                    notebook: args.notebook,
+                    output: args.output,
+                    raw_output: args.raw_output,
+                    executable: args.executable,
+                })?;
+                println!("Provider: notebooklm-mcp-cli {}", result.provider_version);
+                println!("Command: {}", result.provider_command);
+                if let Some(path) = result.raw_output_path {
+                    println!("Raw response: {}", path.display());
+                }
+                println!("Artifact: {}", result.artifact_path.display());
+                println!("Ingest evidence: {}", result.ingest_report_path.display());
+                for diagnostic in &result.ingest_report.diagnostics {
+                    println!("Diagnostic {}: {}", diagnostic.code, diagnostic.message);
+                }
+                println!(
+                    "NotebookLM brief: {}",
                     result.ingest_report.status.as_db_value()
                 );
                 if result.ingest_report.status != ContextIngestStatus::Pass {
@@ -1419,6 +1479,16 @@ mod tests {
         assert!(release_help.contains("--version <VERSION>"));
         assert!(release_help.contains("--origin <ORIGIN>"));
         assert!(release_help.contains("--story <STORY>"));
+
+        let notebook_help = command
+            .find_subcommand_mut("notebooklm")
+            .unwrap()
+            .find_subcommand_mut("brief")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(notebook_help.contains("--query <QUERY>"));
+        assert!(notebook_help.contains("--raw-output <RAW_OUTPUT>"));
     }
 
     #[test]

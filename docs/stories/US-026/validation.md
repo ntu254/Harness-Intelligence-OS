@@ -35,13 +35,24 @@ story gate.
 
 ## Commands
 
-Exact adapter commands are added after provider discovery. Baseline validation:
+Adapter command:
+
+```text
+harness-cli notebooklm brief \
+  --story US-026 \
+  --query "Find grounded product rules and prior decisions relevant to US-026." \
+  --output .harness/context/US-026-notebooklm-brief.json \
+  --raw-output .harness/context/US-026-notebooklm-provider-response.json
+```
+
+Baseline validation:
 
 ```text
 cargo fmt --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 python scripts/verify-mcp-artifact-contracts.py
+harness-cli notebooklm brief --story US-026 --query <grounded-question>
 harness-cli context ingest --story US-026 --source notebooklm --file <generated-artifact>
 harness-cli context --story US-026
 harness-cli arch-check --story US-026
@@ -87,6 +98,30 @@ Design-review evidence:
 Implementation evidence is added after provider invocation, adapter generation,
 US-024 ingest, context pack rendering, and story governance verification.
 
+Implementation evidence recorded so far:
+
+- Story moved to In Progress after provider contract acceptance.
+- CLI command added: `harness-cli notebooklm brief`.
+- Adapter invokes `notebooklm-mcp-cli` through local executable `nlm`.
+- Adapter writes `.harness/context/<story>-notebooklm-provider-response.json`
+  when raw provider output is available.
+- Adapter writes `.harness/context/<story>-notebooklm-brief.json`.
+- Adapter composes generated artifacts with US-024 `context ingest --source
+  notebooklm`.
+- Missing executable/session/provider path records an inconclusive artifact and
+  cannot satisfy governance.
+- Provider stdout that cannot parse as grounded JSON records `fail`.
+- Provider summaries or claims without citations record `fail`.
+- Valid cited raw provider output normalizes into a schema-valid passing
+  `notebooklm-brief` artifact in tests.
+- Local smoke with missing executable produced inconclusive evidence at
+  `.harness/context/US-026-notebooklm-brief.json` and
+  `.harness/context/US-026-notebooklm-ingest-result.json`.
+- `where nlm` found no local provider executable, so live NotebookLM proof and
+  final story gate remain intentionally unclaimed.
+- No Google credentials, cookies, tokens, browser profiles, session files, MCP
+  server direct writes, release/tag, installer pin, or CodeGraph changes.
+
 ## Failure Semantics
 
 | Condition | Required result |
@@ -116,9 +151,10 @@ US-024 ingest, context pack rendering, and story governance verification.
 - Architecture check: passed during story creation.
 - Planning trace: `#19`, Detailed `3/3`.
 - Provider contract design-review trace: `#20`, Detailed `3/3`.
+- Implementation trace: `#21`, Detailed `3/3`, outcome `partial` because live
+  `nlm` provider proof is unavailable locally.
 - Decision 0010 remains the governing file-based boundary.
 - Provider contract: accepted for implementation planning.
 - Default provider: `notebooklm-mcp-cli`.
 - Alternate provider candidate: `PleasePrompto/notebooklm-mcp`.
-- Story remains Planned until the accepted provider path is exercised locally
-  and the adapter implementation starts.
+- Story status: In Progress.

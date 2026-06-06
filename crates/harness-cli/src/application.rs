@@ -91,6 +91,26 @@ pub struct CodeGraphImpactResult {
 }
 
 #[derive(Debug)]
+pub struct NotebookBriefInput {
+    pub story_id: String,
+    pub query: String,
+    pub notebook: Option<String>,
+    pub output: Option<PathBuf>,
+    pub raw_output: Option<PathBuf>,
+    pub executable: String,
+}
+
+#[derive(Debug)]
+pub struct NotebookBriefResult {
+    pub artifact_path: PathBuf,
+    pub raw_output_path: Option<PathBuf>,
+    pub provider_version: String,
+    pub provider_command: String,
+    pub ingest_report_path: PathBuf,
+    pub ingest_report: ContextIngestReport,
+}
+
+#[derive(Debug)]
 pub struct StoryAddInput {
     pub id: String,
     pub title: String,
@@ -240,6 +260,13 @@ impl HarnessService {
         input: CodeGraphImpactInput,
     ) -> crate::infrastructure::Result<CodeGraphImpactResult> {
         self.repository.produce_codegraph_impact(input)
+    }
+
+    pub fn produce_notebook_brief(
+        &self,
+        input: NotebookBriefInput,
+    ) -> crate::infrastructure::Result<NotebookBriefResult> {
+        self.repository.produce_notebook_brief(input)
     }
 
     pub fn check_architecture(

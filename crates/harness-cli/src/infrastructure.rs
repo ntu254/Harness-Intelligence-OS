@@ -14,7 +14,8 @@ use crate::application::{
     BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, CodeGraphImpactInput,
     CodeGraphImpactResult, ContextIngestInput, ContextIngestSummary, ContextPackData,
     DecisionAddInput, DecisionVerifyResult, HarnessContext, InitResult, IntakeInput, MigrateResult,
-    QueryTable, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput,
+    NotebookBriefInput, NotebookBriefResult, QueryTable, ReleaseVerifyInput, StoryAddInput,
+    StoryUpdateInput, StoryVerifyResult, TraceInput,
 };
 use crate::domain::{
     normalize_token, path_has_any_segment, score_trace, ArchitectureCheckResult,
@@ -95,6 +96,7 @@ pub trait HarnessRepository {
         &self,
         input: CodeGraphImpactInput,
     ) -> Result<CodeGraphImpactResult>;
+    fn produce_notebook_brief(&self, input: NotebookBriefInput) -> Result<NotebookBriefResult>;
     fn check_architecture(
         &self,
         config_path: Option<PathBuf>,
@@ -1159,6 +1161,151 @@ impl HarnessRepository for SqliteHarnessRepository {
         })?;
 
         Ok(CodeGraphImpactResult {
+            artifact_path,
+            raw_output_path: raw_path,
+            provider_version,
+            provider_command,
+            ingest_report_path,
+            ingest_report,
+        })
+    }
+
+    fn produce_notebook_brief(&self, input: NotebookBriefInput) -> Result<NotebookBriefResult> {
+        if input.query.trim().is_empty() {
+            return Err(HarnessInfraError::InvalidContextIngest(
+                "NotebookLM brief query must not be empty".to_owned(),
+            ));
+        }
+        let connection = self.open_existing()?;
+        let story_exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM story WHERE id=?1);",
+            params![input.story_id],
+            |row| row.get::<_, i64>(0),
+        )? == 1;
+        if !story_exists {
+            return Err(HarnessInfraError::StoryNotFound(input.story_id));
+        }
+        let generated_at =
+            connection.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now');", [], |row| {
+                row.get::<_, String>(0)
+            })?;
+        drop(connection);
+
+        let artifact_path = input.output.unwrap_or_else(|| {
+            self.repo_root.join(format!(
+                ".harness/context/{}-notebooklm-brief.json",
+                input.story_id
+            ))
+        });
+        let raw_output_path = input.raw_output.unwrap_or_else(|| {
+            self.repo_root.join(format!(
+                ".harness/context/{}-notebooklm-provider-response.json",
+                input.story_id
+            ))
+        });
+        let provider_version =
+            command_output(&input.executable, &["--version"], &self.repo_root, None)
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "unknown".to_owned());
+
+        let mut provider_args = vec![
+            "ask".to_owned(),
+            "--json".to_owned(),
+            "--query".to_owned(),
+            input.query.clone(),
+        ];
+        if let Some(notebook) = &input.notebook {
+            if notebook.trim().is_empty() {
+                return Err(HarnessInfraError::InvalidContextIngest(
+                    "NotebookLM notebook id must not be empty when provided".to_owned(),
+                ));
+            }
+            provider_args.push("--notebook".to_owned());
+            provider_args.push(notebook.clone());
+        }
+        let request_label = match &input.notebook {
+            Some(notebook) => format!("notebook:{notebook}:query:{}", input.query),
+            None => format!("query:{}", input.query),
+        };
+        let provider_command = format!("{} {}", input.executable, provider_args.join(" "));
+        let invocation_id = uuid_from_sha256(&format!(
+            "{}:{}:{}",
+            input.story_id, request_label, generated_at
+        ));
+        let provider_result = command_output(
+            &input.executable,
+            &provider_args.iter().map(String::as_str).collect::<Vec<_>>(),
+            &self.repo_root,
+            None,
+        );
+
+        let mut raw_path = None;
+        let artifact = match provider_result {
+            Err(error) => notebook_unavailable_artifact(
+                &input.story_id,
+                &generated_at,
+                &provider_version,
+                &invocation_id,
+                "provider_unavailable",
+                true,
+                &format!("NotebookLM executable could not be started: {error}"),
+            ),
+            Ok(output) if !output.status.success() => {
+                let detail = notebook_provider_failure_detail(&output.stdout, &output.stderr);
+                if !output.stdout.is_empty() || !output.stderr.is_empty() {
+                    write_provider_response(
+                        &raw_output_path,
+                        &output.stdout,
+                        &output.stderr,
+                        output.status.code(),
+                    )?;
+                    raw_path = Some(raw_output_path.clone());
+                }
+                let reason = notebook_unavailable_reason(&detail);
+                notebook_unavailable_artifact(
+                    &input.story_id,
+                    &generated_at,
+                    &provider_version,
+                    &invocation_id,
+                    reason,
+                    true,
+                    if detail.is_empty() {
+                        "NotebookLM provider exited non-zero"
+                    } else {
+                        &detail
+                    },
+                )
+            }
+            Ok(output) => {
+                write_provider_response(
+                    &raw_output_path,
+                    &output.stdout,
+                    &output.stderr,
+                    output.status.code(),
+                )?;
+                raw_path = Some(raw_output_path.clone());
+                normalize_notebook_output(
+                    &input.story_id,
+                    &generated_at,
+                    &provider_version,
+                    &invocation_id,
+                    &path_for_storage(&self.repo_root, &raw_output_path),
+                    &output.stdout,
+                )
+            }
+        };
+        write_json_value(&artifact_path, &artifact)?;
+        let (ingest_report_path, ingest_report) = self.ingest_context(ContextIngestInput {
+            story_id: input.story_id,
+            source: ContextSource::Notebooklm,
+            file: artifact_path.clone(),
+            output: None,
+        })?;
+
+        Ok(NotebookBriefResult {
             artifact_path,
             raw_output_path: raw_path,
             provider_version,
@@ -3069,6 +3216,53 @@ struct CodeGraphImpactNode {
     start_line: Option<u32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct NotebookProviderOutput {
+    summary: String,
+    #[serde(default)]
+    constraints: Vec<String>,
+    #[serde(default, alias = "openQuestions")]
+    open_questions: Vec<String>,
+    #[serde(default, alias = "affectedDocs")]
+    affected_docs: Vec<String>,
+    sources: Vec<NotebookProviderSource>,
+    claims: Vec<NotebookProviderClaim>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NotebookProviderSource {
+    #[serde(alias = "sourceId", alias = "id")]
+    source_id: String,
+    title: String,
+    uri: String,
+    sha256: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default, alias = "retrievedAt")]
+    retrieved_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NotebookProviderClaim {
+    #[serde(default, alias = "claimId")]
+    claim_id: Option<String>,
+    statement: String,
+    citations: Vec<NotebookProviderCitation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NotebookProviderCitation {
+    #[serde(alias = "sourceId")]
+    source_id: String,
+    locator: String,
+    #[serde(default)]
+    quote: Option<String>,
+    #[serde(default, alias = "quoteSha256")]
+    quote_sha256: Option<String>,
+}
+
 fn command_output(
     executable: &str,
     args: &[&str],
@@ -3456,6 +3650,281 @@ fn infer_codegraph_risk_flags(paths: &[String]) -> Vec<String> {
         }
     }
     flags
+}
+
+fn notebook_base_artifact(
+    story_id: &str,
+    generated_at: &str,
+    provider_version: &str,
+    invocation_id: &str,
+    sources: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "1.0.0",
+        "artifact_type": "notebooklm-brief",
+        "artifact_id": uuid_from_sha256(&format!("{story_id}:notebooklm:{invocation_id}")),
+        "story_id": story_id,
+        "generated_at": generated_at,
+        "provenance": {
+            "provider": "notebooklm-mcp-cli",
+            "adapter": "harness-cli-notebooklm",
+            "adapter_version": format!(
+                "{}; notebooklm-mcp-cli {}",
+                env!("CARGO_PKG_VERSION"),
+                provider_version
+            ),
+            "invocation_id": invocation_id,
+            "sources": sources
+        }
+    })
+}
+
+fn notebook_unavailable_artifact(
+    story_id: &str,
+    generated_at: &str,
+    provider_version: &str,
+    invocation_id: &str,
+    reason: &str,
+    retryable: bool,
+    detail: &str,
+) -> serde_json::Value {
+    let mut artifact = notebook_base_artifact(
+        story_id,
+        generated_at,
+        provider_version,
+        invocation_id,
+        serde_json::json!([]),
+    );
+    let object = artifact
+        .as_object_mut()
+        .expect("base artifact is an object");
+    object.insert("status".to_owned(), serde_json::json!("inconclusive"));
+    object.insert(
+        "unavailable".to_owned(),
+        serde_json::json!({
+            "reason": reason,
+            "retryable": retryable,
+            "detail": detail
+        }),
+    );
+    artifact
+}
+
+fn normalize_notebook_output(
+    story_id: &str,
+    generated_at: &str,
+    provider_version: &str,
+    invocation_id: &str,
+    raw_output_uri: &str,
+    stdout: &[u8],
+) -> serde_json::Value {
+    let response = match serde_json::from_slice::<NotebookProviderOutput>(stdout) {
+        Ok(response) => response,
+        Err(error) => {
+            let artifact = notebook_base_artifact(
+                story_id,
+                generated_at,
+                provider_version,
+                invocation_id,
+                serde_json::json!([]),
+            );
+            return notebook_failed_artifact(
+                artifact,
+                "INVALID_PROVIDER_JSON",
+                &format!("NotebookLM provider output is invalid: {error}"),
+            );
+        }
+    };
+
+    let sources = response
+        .sources
+        .iter()
+        .map(|source| {
+            let hash_input = source
+                .sha256
+                .clone()
+                .or_else(|| source.content.clone())
+                .or_else(|| source.text.clone())
+                .unwrap_or_else(|| format!("{}:{}:{}", source.source_id, source.title, source.uri));
+            let sha256 = source
+                .sha256
+                .clone()
+                .unwrap_or_else(|| format!("{:x}", Sha256::digest(hash_input.as_bytes())));
+            serde_json::json!({
+                "source_id": normalize_notebook_source_id(&source.source_id),
+                "title": source.title,
+                "uri": source.uri,
+                "sha256": sha256,
+                "retrieved_at": source
+                    .retrieved_at
+                    .clone()
+                    .unwrap_or_else(|| generated_at.to_owned())
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let claims = response
+        .claims
+        .iter()
+        .enumerate()
+        .map(|(index, claim)| {
+            let citations = claim
+                .citations
+                .iter()
+                .map(|citation| {
+                    let mut value = serde_json::json!({
+                        "source_id": normalize_notebook_source_id(&citation.source_id),
+                        "locator": citation.locator,
+                    });
+                    let quote_hash = citation.quote_sha256.clone().or_else(|| {
+                        citation
+                            .quote
+                            .as_ref()
+                            .map(|quote| format!("{:x}", Sha256::digest(quote.as_bytes())))
+                    });
+                    if let Some(hash) = quote_hash {
+                        value
+                            .as_object_mut()
+                            .expect("citation is an object")
+                            .insert("quote_sha256".to_owned(), serde_json::json!(hash));
+                    }
+                    value
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "claim_id": claim
+                    .claim_id
+                    .clone()
+                    .unwrap_or_else(|| format!("NL-{}", index + 1)),
+                "statement": claim.statement,
+                "citations": citations
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut artifact = notebook_base_artifact(
+        story_id,
+        generated_at,
+        provider_version,
+        invocation_id,
+        serde_json::json!(sources),
+    );
+    let object = artifact
+        .as_object_mut()
+        .expect("base artifact is an object");
+    object.insert("status".to_owned(), serde_json::json!("pass"));
+    object.insert(
+        "brief".to_owned(),
+        serde_json::json!({
+            "summary": response.summary,
+            "constraints": response.constraints,
+            "open_questions": response.open_questions,
+            "affected_docs": response.affected_docs,
+            "claims": claims
+        }),
+    );
+    let bytes = serde_json::to_vec(&artifact).unwrap_or_default();
+    let validation = validate_context_artifact(
+        ContextSource::Notebooklm,
+        story_id,
+        &bytes,
+        &format!("{:x}", Sha256::digest(&bytes)),
+        Path::new("."),
+    );
+    if validation.status == ContextIngestStatus::Pass {
+        artifact
+    } else {
+        let messages = validation
+            .diagnostics
+            .iter()
+            .map(|item| format!("{}: {}", item.code, item.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        notebook_failed_artifact(
+            notebook_base_artifact(
+                story_id,
+                generated_at,
+                provider_version,
+                invocation_id,
+                serde_json::json!([{
+                    "source_id": "SRC-1",
+                    "title": "raw-provider-response",
+                    "uri": raw_output_uri,
+                    "sha256": format!("{:x}", Sha256::digest(stdout)),
+                    "retrieved_at": generated_at
+                }]),
+            ),
+            "UNGROUNDED_PROVIDER_OUTPUT",
+            &messages,
+        )
+    }
+}
+
+fn notebook_failed_artifact(
+    mut artifact: serde_json::Value,
+    code: &str,
+    message: &str,
+) -> serde_json::Value {
+    let object = artifact
+        .as_object_mut()
+        .expect("base artifact is an object");
+    object.insert("status".to_owned(), serde_json::json!("fail"));
+    object.insert(
+        "errors".to_owned(),
+        serde_json::json!([{
+            "code": code,
+            "message": message,
+            "retryable": false
+        }]),
+    );
+    artifact
+}
+
+fn normalize_notebook_source_id(value: &str) -> String {
+    let suffix = value
+        .strip_prefix("SRC-")
+        .or_else(|| value.strip_prefix("src-"))
+        .unwrap_or(value)
+        .trim();
+    if !suffix.is_empty() && suffix.chars().all(|character| character.is_ascii_digit()) {
+        format!("SRC-{suffix}")
+    } else {
+        value.to_owned()
+    }
+}
+
+fn notebook_provider_failure_detail(stdout: &[u8], stderr: &[u8]) -> String {
+    let stderr_text = String::from_utf8_lossy(stderr).trim().to_owned();
+    if !stderr_text.is_empty() {
+        return stderr_text;
+    }
+    String::from_utf8_lossy(stdout).trim().to_owned()
+}
+
+fn notebook_unavailable_reason(detail: &str) -> &'static str {
+    let normalized = detail.to_ascii_lowercase();
+    if normalized.contains("timeout") || normalized.contains("timed out") {
+        "timeout"
+    } else if normalized.contains("auth")
+        || normalized.contains("login")
+        || normalized.contains("permission")
+        || normalized.contains("denied")
+        || normalized.contains("session")
+    {
+        "permission_denied"
+    } else if normalized.contains("notebook")
+        || normalized.contains("source")
+        || normalized.contains("not found")
+    {
+        "source_unavailable"
+    } else if normalized.contains("insufficient")
+        || normalized.contains("citation")
+        || normalized.contains("grounded")
+    {
+        "insufficient_evidence"
+    } else {
+        "provider_unavailable"
+    }
 }
 
 fn diagnostic(code: &str, message: &str) -> ContextIngestDiagnostic {
@@ -3909,8 +4378,8 @@ mod tests {
     use super::*;
     use crate::application::{
         BacklogAddInput, BacklogCloseInput, CodeGraphImpactInput, ContextIngestInput,
-        DecisionAddInput, HarnessContext, HarnessService, IntakeInput, ReleaseVerifyInput,
-        StoryAddInput, StoryUpdateInput, TraceInput,
+        DecisionAddInput, HarnessContext, HarnessService, IntakeInput, NotebookBriefInput,
+        ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, TraceInput,
     };
     use crate::domain::{
         BacklogFilter, BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList,
@@ -4428,6 +4897,134 @@ mod tests {
 
         assert_eq!(artifact["status"], "fail");
         assert_eq!(artifact["errors"][0]["code"], "INVALID_PROVIDER_JSON");
+    }
+
+    #[test]
+    fn notebook_adapter_records_missing_executable_as_inconclusive() {
+        let (_temp_dir, _repo_root, repository) = context_test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-NO-NOTEBOOKLM", 0, 1);
+
+        let result = repository
+            .produce_notebook_brief(NotebookBriefInput {
+                story_id: "US-NO-NOTEBOOKLM".to_owned(),
+                query: "Find grounded product rules.".to_owned(),
+                notebook: None,
+                output: None,
+                raw_output: None,
+                executable: "harness-notebooklm-does-not-exist".to_owned(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            result.ingest_report.status,
+            ContextIngestStatus::Inconclusive
+        );
+        assert!(result.artifact_path.is_file());
+        assert!(!result.ingest_report.governance.eligible_for_story_verify);
+        let gate = repository.verify_story_gate("US-NO-NOTEBOOKLM").unwrap();
+        assert!(gate
+            .missing
+            .contains(&"NotebookLM context ingest proof".to_owned()));
+    }
+
+    #[test]
+    fn notebook_adapter_normalizes_cited_provider_output_into_passing_artifact() {
+        let stdout = br#"{
+            "summary": "US-026 must preserve the file-based NotebookLM boundary.",
+            "constraints": ["Do not store provider session secrets."],
+            "openQuestions": [],
+            "affectedDocs": ["docs/stories/US-026/design.md"],
+            "sources": [{
+                "sourceId": "1",
+                "title": "US-026 design",
+                "uri": "docs/stories/US-026/design.md",
+                "content": "Harness stores no Google credentials, cookies, tokens, or sessions."
+            }],
+            "claims": [{
+                "statement": "Harness must keep NotebookLM session state outside its governance database.",
+                "citations": [{
+                    "sourceId": "1",
+                    "locator": "design.md#Interface Contract",
+                    "quote": "Harness must not store Google credentials."
+                }]
+            }]
+        }"#;
+
+        let artifact = normalize_notebook_output(
+            "US-026",
+            "2026-06-07T00:00:00Z",
+            "0.1.0",
+            "run-1",
+            ".harness/context/US-026-notebooklm-provider-response.json",
+            stdout,
+        );
+        let bytes = serde_json::to_vec(&artifact).unwrap();
+        let validation = validate_context_artifact(
+            ContextSource::Notebooklm,
+            "US-026",
+            &bytes,
+            &format!("{:x}", Sha256::digest(&bytes)),
+            Path::new("."),
+        );
+
+        assert_eq!(validation.status, ContextIngestStatus::Pass);
+        assert!(validation.diagnostics.is_empty());
+        assert_eq!(artifact["status"], "pass");
+        assert_eq!(artifact["provenance"]["provider"], "notebooklm-mcp-cli");
+        assert_eq!(artifact["brief"]["claims"][0]["claim_id"], "NL-1");
+        assert_eq!(
+            artifact["brief"]["claims"][0]["citations"][0]["source_id"],
+            "SRC-1"
+        );
+    }
+
+    #[test]
+    fn notebook_adapter_maps_invalid_provider_json_to_fail() {
+        let artifact = normalize_notebook_output(
+            "US-026",
+            "2026-06-07T00:00:00Z",
+            "0.1.0",
+            "run-2",
+            ".harness/context/raw.json",
+            b"not-json",
+        );
+
+        assert_eq!(artifact["status"], "fail");
+        assert_eq!(artifact["errors"][0]["code"], "INVALID_PROVIDER_JSON");
+    }
+
+    #[test]
+    fn notebook_adapter_rejects_summary_without_cited_claims() {
+        let stdout = br#"{
+            "summary": "This is only a model-generated summary.",
+            "sources": [{
+                "sourceId": "SRC-1",
+                "title": "Design",
+                "uri": "docs/stories/US-026/design.md",
+                "content": "Grounded claims require citations."
+            }],
+            "claims": [{
+                "statement": "This claim has no citation.",
+                "citations": []
+            }]
+        }"#;
+
+        let artifact = normalize_notebook_output(
+            "US-026",
+            "2026-06-07T00:00:00Z",
+            "0.1.0",
+            "run-3",
+            ".harness/context/raw.json",
+            stdout,
+        );
+
+        assert_eq!(artifact["status"], "fail");
+        assert_eq!(artifact["errors"][0]["code"], "UNGROUNDED_PROVIDER_OUTPUT");
+        assert!(artifact["errors"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("MISSING_CITATION"));
     }
 
     #[test]

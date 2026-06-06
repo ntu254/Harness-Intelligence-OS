@@ -82,19 +82,21 @@ Alternate provider:
   management and DOM-level citations.
 - It is not the default for US-026 unless the default provider proves unusable.
 
-The anticipated Harness command shape is:
+The implemented Harness command shape is:
 
 ```text
 harness-cli notebooklm brief \
   --story US-026 \
-  --source-pack <provider-specific-source-or-export> \
+  --query <grounded-question> \
+  [--notebook <provider-notebook-id-or-url>] \
   [--output <artifact.json>] \
   [--raw-output <provider-response.json>]
 ```
 
-Exact flags are not accepted yet. They must come from the real provider
-implementation pass and the observed provider response, while preserving the
-accepted trust boundary above.
+The initial provider invocation is `nlm ask --json --query <grounded-question>`
+with optional `--notebook <provider-notebook-id-or-url>`. If the provider CLI
+changes, the adapter may revise provider-specific invocation internals while
+preserving the Harness command and accepted trust boundary above.
 
 ## Data Model
 

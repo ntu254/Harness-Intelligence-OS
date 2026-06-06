@@ -111,6 +111,14 @@ runs local CodeGraph changed-files or symbol analysis, stores the raw response,
 normalizes a US-023 artifact, and sends it through US-024 ingestion. CodeGraph
 never writes Harness governance state directly.
 
+US-026 adds the NotebookLM grounded-brief producer adapter. `harness-cli
+notebooklm brief` invokes the accepted `notebooklm-mcp-cli` boundary through
+the local `nlm` executable, stores or references the raw provider response,
+normalizes a US-023 `notebooklm-brief` artifact, and sends it through US-024
+ingestion. Harness never stores Google credentials, cookies, browser profiles,
+tokens, or provider session files. Missing provider/session/network/notebook
+is inconclusive; malformed or uncited output fails.
+
 This separation keeps policy docs stable and human-readable while giving agents
 a structured, queryable record of operational state. It also prepares the
 harness for future observability and automated evolution without adding more
@@ -128,6 +136,8 @@ Common commands:
 scripts/bin/harness-cli intake  --type <type> --summary <text> --lane <lane>
 scripts/bin/harness-cli intake  --summary <text> --story <id> --auto --impact-report <report> --business-context <context>
 scripts/bin/harness-cli context --story <id>
+scripts/bin/harness-cli codegraph impact --story <id> --changed-files <paths.txt>
+scripts/bin/harness-cli notebooklm brief --story <id> --query <grounded question>
 scripts/bin/harness-cli arch-check --story <id>
 scripts/bin/harness-cli story   add --id <id> --title <text> --lane <lane>
 scripts/bin/harness-cli story   update --id <id> --status <status>
