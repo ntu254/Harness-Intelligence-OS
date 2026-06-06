@@ -15,19 +15,22 @@ use crate::application::{
     AutoIntakeEvidence, BacklogAddInput, BacklogCloseInput, BacklogSuggestInput,
     BrownfieldImportResult, CodeGraphImpactInput, CodeGraphImpactResult, ContextIngestInput,
     ContextIngestSummary, ContextPackData, DecisionAddInput, DecisionVerifyResult,
-    FrictionAddInput, HarnessContext, InitResult, IntakeInput, MigrateResult, NotebookBriefInput,
-    NotebookBriefResult, QueryTable, ReleaseVerifyInput, RuleSuggestInput, StoryAddInput,
-    StoryUpdateInput, StoryVerifyResult, TraceInput,
+    FrictionAddInput, GovernanceReportInput, HarnessContext, InitResult, IntakeInput,
+    MigrateResult, NotebookBriefInput, NotebookBriefResult, QueryTable, ReleaseVerifyInput,
+    RuleSuggestInput, StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput,
 };
 use crate::domain::{
     normalize_token, path_has_any_segment, score_trace, ArchitectureCheckResult,
     ArchitectureConfig, ArchitectureViolation, BacklogFilter, BacklogRecord,
     BacklogSuggestionRecord, CodeGraphMode, ContextIngestDiagnostic, ContextIngestGovernance,
     ContextIngestReport, ContextIngestStatus, ContextSource, ContextSourceArtifact, DecisionRecord,
-    FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionType, HarnessStats,
-    IntakeRecord, MappedContext, ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig,
-    ReleaseVerificationReport, RiskLane, RuleProposalRecord, StoryGateResult, StoryMatrixRecord,
-    StoryVerifyStatus, TraceRecord, TraceScoreResult, TraceScoreSource,
+    FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionType, GovernanceFrictionSummary,
+    GovernanceGateSummary, GovernanceProof, GovernanceReleaseSummary, GovernanceReport,
+    GovernanceRepository, GovernanceStoryRow, GovernanceStorySummary, GovernanceValidationCommand,
+    GovernanceValidationSummary, HarnessStats, IntakeRecord, MappedContext, ReleaseAssetEvidence,
+    ReleaseCheckResult, ReleaseConfig, ReleaseVerificationReport, RiskLane, RuleProposalRecord,
+    StoryGateResult, StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
+    TraceScoreSource,
 };
 
 pub type Result<T> = std::result::Result<T, HarnessInfraError>;
@@ -96,6 +99,10 @@ pub trait HarnessRepository {
         &self,
         input: ReleaseVerifyInput,
     ) -> Result<(PathBuf, ReleaseVerificationReport)>;
+    fn generate_governance_report(
+        &self,
+        input: GovernanceReportInput,
+    ) -> Result<(PathBuf, GovernanceReport)>;
     fn ingest_context(&self, input: ContextIngestInput) -> Result<(PathBuf, ContextIngestReport)>;
     fn auto_intake_evidence(&self, story_id: &str) -> Result<AutoIntakeEvidence>;
     fn produce_codegraph_impact(
@@ -906,6 +913,88 @@ impl HarnessRepository for SqliteHarnessRepository {
             ],
         )?;
 
+        Ok((output_path, report))
+    }
+
+    fn generate_governance_report(
+        &self,
+        input: GovernanceReportInput,
+    ) -> Result<(PathBuf, GovernanceReport)> {
+        let connection = self.open_existing()?;
+        let generated_at =
+            connection.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now');", [], |row| {
+                row.get::<_, String>(0)
+            })?;
+        let repository = governance_repository_metadata(&self.repo_root);
+        let report_id = uuid_from_sha256(&format!(
+            "{}:{}:{}",
+            generated_at,
+            repository.origin,
+            repository.commit.as_deref().unwrap_or("")
+        ));
+
+        let story_summary = connection.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN status='implemented' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status='in_progress' THEN 1 ELSE 0 END), 0)
+             FROM story;",
+            [],
+            |row| {
+                Ok(GovernanceStorySummary {
+                    total: row.get(0)?,
+                    implemented: row.get(1)?,
+                    in_progress: row.get(2)?,
+                    blocked: 0,
+                })
+            },
+        )?;
+        let gate_summary = connection.query_row(
+            "SELECT
+                COALESCE(SUM(CASE WHEN gate_result='pass' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN gate_result='fail' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN gate_result IS NULL THEN 1 ELSE 0 END), 0)
+             FROM story;",
+            [],
+            |row| {
+                Ok(GovernanceGateSummary {
+                    pass: row.get(0)?,
+                    fail: row.get(1)?,
+                    not_run: row.get(2)?,
+                })
+            },
+        )?;
+        let validation_summary = GovernanceValidationSummary {
+            commands: governance_validation_commands(&connection)?,
+        };
+        let release_summary = governance_release_summary(&connection)?;
+        let friction_summary = governance_friction_summary(&connection)?;
+        let stories = governance_story_rows(&connection, &self.repo_root)?;
+
+        let report = GovernanceReport {
+            schema_version: "1.0.0".to_owned(),
+            artifact_type: "governance-report".to_owned(),
+            report_id,
+            generated_at,
+            repository,
+            story_summary,
+            gate_summary,
+            validation_summary,
+            release_summary,
+            friction_summary,
+            stories,
+        };
+
+        let output_path = input.output.unwrap_or_else(|| {
+            self.repo_root
+                .join(".harness/reports/governance-report.json")
+        });
+        let output_path = if output_path.is_absolute() {
+            output_path
+        } else {
+            self.repo_root.join(output_path)
+        };
+        write_governance_report(&output_path, &report)?;
         Ok((output_path, report))
     }
 
@@ -2313,6 +2402,285 @@ impl From<HarnessContext> for SqliteHarnessRepository {
     fn from(context: HarnessContext) -> Self {
         Self::new(context.repo_root, context.db_path, context.schema_dir)
     }
+}
+
+#[derive(Debug)]
+struct GovernanceStorySource {
+    id: String,
+    status: String,
+    risk_lane: String,
+    unit_proof: i64,
+    integration_proof: i64,
+    e2e_proof: i64,
+    platform_proof: i64,
+    evidence: Option<String>,
+    context_pack_path: Option<String>,
+    arch_check_result: Option<String>,
+    last_verified_result: Option<String>,
+    release_proof_required: i64,
+    codegraph_ingest_required: i64,
+    notebooklm_ingest_required: i64,
+}
+
+fn governance_repository_metadata(repo_root: &Path) -> GovernanceRepository {
+    GovernanceRepository {
+        origin: git_output(repo_root, &["remote", "get-url", "origin"])
+            .map(|value| normalize_git_origin(&value))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "local".to_owned()),
+        commit: git_output(repo_root, &["rev-parse", "--short=12", "HEAD"]),
+        branch: git_output(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"]),
+    }
+}
+
+fn normalize_git_origin(origin: &str) -> String {
+    let trimmed = origin.trim().trim_end_matches(".git");
+    if let Some(rest) = trimmed.strip_prefix("git@github.com:") {
+        return rest.to_owned();
+    }
+    if let Some(rest) = trimmed.strip_prefix("https://github.com/") {
+        return rest.to_owned();
+    }
+    if let Some(rest) = trimmed.strip_prefix("http://github.com/") {
+        return rest.to_owned();
+    }
+    trimmed.to_owned()
+}
+
+fn governance_validation_commands(
+    connection: &Connection,
+) -> Result<Vec<GovernanceValidationCommand>> {
+    let mut statement = connection.prepare(
+        "SELECT verify_command, COALESCE(last_verified_result, 'not_run')
+         FROM story
+         WHERE verify_command IS NOT NULL AND trim(verify_command) != ''
+         ORDER BY id;",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(GovernanceValidationCommand {
+            command: row.get(0)?,
+            result: row.get(1)?,
+        })
+    })?;
+    collect_rows(rows)
+}
+
+fn governance_release_summary(connection: &Connection) -> Result<GovernanceReleaseSummary> {
+    connection
+        .query_row(
+            "SELECT version, result, assets_checked
+             FROM release_verification
+             ORDER BY id DESC
+             LIMIT 1;",
+            [],
+            |row| {
+                Ok(GovernanceReleaseSummary {
+                    latest_version: row.get(0)?,
+                    release_verify_result: row.get(1)?,
+                    assets_checked: row.get(2)?,
+                })
+            },
+        )
+        .optional()?
+        .map(Ok)
+        .unwrap_or_else(|| {
+            Ok(GovernanceReleaseSummary {
+                latest_version: None,
+                release_verify_result: "none".to_owned(),
+                assets_checked: 0,
+            })
+        })
+}
+
+fn governance_friction_summary(connection: &Connection) -> Result<GovernanceFrictionSummary> {
+    connection
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM friction_event),
+                (SELECT COUNT(*) FROM friction_event WHERE severity='high'),
+                (SELECT COUNT(*) FROM backlog WHERE status IN ('proposed', 'accepted')),
+                (SELECT COUNT(*) FROM friction_event
+                 WHERE proposed_action_json LIKE '%rule_proposal%');",
+            [],
+            |row| {
+                Ok(GovernanceFrictionSummary {
+                    events: row.get(0)?,
+                    high_severity: row.get(1)?,
+                    open_backlog_suggestions: row.get(2)?,
+                    open_rule_proposals: row.get(3)?,
+                })
+            },
+        )
+        .map_err(HarnessInfraError::from)
+}
+
+fn governance_story_rows(
+    connection: &Connection,
+    repo_root: &Path,
+) -> Result<Vec<GovernanceStoryRow>> {
+    let mut statement = connection.prepare(
+        "SELECT id, status, risk_lane, unit_proof, integration_proof,
+                e2e_proof, platform_proof, evidence, context_pack_path,
+                arch_check_result, last_verified_result, release_proof_required,
+                codegraph_ingest_required, notebooklm_ingest_required
+         FROM story
+         ORDER BY id;",
+    )?;
+    let sources = collect_rows(statement.query_map([], |row| {
+        Ok(GovernanceStorySource {
+            id: row.get(0)?,
+            status: row.get(1)?,
+            risk_lane: row.get(2)?,
+            unit_proof: row.get(3)?,
+            integration_proof: row.get(4)?,
+            e2e_proof: row.get(5)?,
+            platform_proof: row.get(6)?,
+            evidence: row.get(7)?,
+            context_pack_path: row.get(8)?,
+            arch_check_result: row.get(9)?,
+            last_verified_result: row.get(10)?,
+            release_proof_required: row.get(11)?,
+            codegraph_ingest_required: row.get(12)?,
+            notebooklm_ingest_required: row.get(13)?,
+        })
+    })?)?;
+
+    sources
+        .iter()
+        .map(|source| {
+            Ok(GovernanceStoryRow {
+                story_id: source.id.clone(),
+                status: source.status.clone(),
+                risk_lane: source.risk_lane.clone(),
+                proof: GovernanceProof {
+                    unit: source.unit_proof == 1,
+                    integration: source.integration_proof == 1,
+                    e2e: source.e2e_proof == 1,
+                    platform: source.platform_proof == 1,
+                },
+                gate_result: source
+                    .last_stored_gate_result(connection)?
+                    .unwrap_or_else(|| "not_run".to_owned()),
+                missing_evidence: governance_missing_evidence(connection, repo_root, source)?,
+                evidence: source.evidence.clone(),
+            })
+        })
+        .collect()
+}
+
+impl GovernanceStorySource {
+    fn last_stored_gate_result(&self, connection: &Connection) -> Result<Option<String>> {
+        connection
+            .query_row(
+                "SELECT gate_result FROM story WHERE id=?1;",
+                params![self.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(HarnessInfraError::from)
+            .map(|value| value.flatten())
+    }
+}
+
+fn governance_missing_evidence(
+    connection: &Connection,
+    repo_root: &Path,
+    story: &GovernanceStorySource,
+) -> Result<Vec<String>> {
+    let mut missing = Vec::new();
+    if !row_exists(
+        connection,
+        "SELECT EXISTS(SELECT 1 FROM intake WHERE story_id=?1);",
+        &story.id,
+    )? {
+        missing.push("intake".to_owned());
+    }
+    let context_pack_exists = story
+        .context_pack_path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .is_some_and(|value| resolve_repo_path(repo_root, value).is_file());
+    if !context_pack_exists {
+        missing.push("context pack".to_owned());
+    }
+    if story.arch_check_result.as_deref() != Some("pass") {
+        missing.push("architecture check result".to_owned());
+    }
+    if story.last_verified_result.as_deref() != Some("pass") {
+        missing.push("validation command proof".to_owned());
+    }
+    if story.risk_lane == "high_risk" {
+        let has_proof_flag = [
+            story.unit_proof,
+            story.integration_proof,
+            story.e2e_proof,
+            story.platform_proof,
+        ]
+        .into_iter()
+        .any(|value| value == 1);
+        if !has_proof_flag
+            || story
+                .evidence
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+        {
+            missing.push("validation proof".to_owned());
+        }
+    }
+    if !row_exists(
+        connection,
+        "SELECT EXISTS(SELECT 1 FROM trace WHERE story_id=?1);",
+        &story.id,
+    )? {
+        missing.push("trace".to_owned());
+    }
+    if story.release_proof_required == 1
+        && !row_exists(
+            connection,
+            "SELECT EXISTS(
+                SELECT 1 FROM release_verification
+                WHERE story_id=?1 AND result='pass'
+             );",
+            &story.id,
+        )?
+    {
+        missing.push("release verification proof".to_owned());
+    }
+    for (required, source, label) in [
+        (
+            story.codegraph_ingest_required,
+            "codegraph",
+            "CodeGraph context ingest proof",
+        ),
+        (
+            story.notebooklm_ingest_required,
+            "notebooklm",
+            "NotebookLM context ingest proof",
+        ),
+    ] {
+        if required == 1
+            && connection.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM context_ingest
+                    WHERE story_id=?1 AND source=?2 AND result='pass'
+                 );",
+                params![story.id, source],
+                |row| row.get::<_, i64>(0),
+            )? != 1
+        {
+            missing.push(label.to_owned());
+        }
+    }
+    Ok(missing)
+}
+
+fn row_exists(connection: &Connection, sql: &str, story_id: &str) -> Result<bool> {
+    connection
+        .query_row(sql, params![story_id], |row| row.get::<_, i64>(0))
+        .map(|value| value == 1)
+        .map_err(HarnessInfraError::from)
 }
 
 #[derive(Debug)]
@@ -5316,6 +5684,26 @@ fn write_release_report(path: &Path, report: &ReleaseVerificationReport) -> Resu
     Ok(())
 }
 
+fn write_governance_report(path: &Path, report: &GovernanceReport) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("json.tmp");
+    fs::write(
+        &temporary,
+        serde_json::to_vec_pretty(report).map_err(|error| {
+            HarnessInfraError::InvalidContextIngest(format!(
+                "could not serialize governance report: {error}"
+            ))
+        })?,
+    )?;
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    fs::rename(temporary, path)?;
+    Ok(())
+}
+
 fn path_for_storage(repo_root: &Path, path: &Path) -> String {
     path.strip_prefix(repo_root)
         .unwrap_or(path)
@@ -5341,9 +5729,9 @@ mod tests {
     use crate::application::{
         BacklogAddInput, BacklogCloseInput, BacklogSuggestInput, CodeGraphImpactInput,
         ContextIngestInput, DecisionAddInput, FrictionAddInput, FrictionEvidenceInput,
-        FrictionProposedActionInput, HarnessContext, HarnessService, IntakeInput,
-        NotebookBriefInput, ReleaseVerifyInput, RuleSuggestInput, StoryAddInput, StoryUpdateInput,
-        TraceInput,
+        FrictionProposedActionInput, GovernanceReportInput, HarnessContext, HarnessService,
+        IntakeInput, NotebookBriefInput, ReleaseVerifyInput, RuleSuggestInput, StoryAddInput,
+        StoryUpdateInput, TraceInput,
     };
     use crate::domain::{
         BacklogFilter, BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList,
@@ -6930,6 +7318,158 @@ mod tests {
             repository.query_backlog(BacklogFilter::All).unwrap(),
             backlog_before
         );
+    }
+
+    #[test]
+    fn governance_report_generates_schema_snapshot_without_mutating_gate() {
+        let (_temp_dir, repo_root, repository) = context_test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-REP", 0, 0);
+        repository
+            .update_story(StoryUpdateInput {
+                id: "US-REP".to_owned(),
+                status: Some("implemented".to_owned()),
+                evidence: Some("governance report smoke passed".to_owned()),
+                unit: Some(BoolFlag(1)),
+                integration: Some(BoolFlag(1)),
+                e2e: Some(BoolFlag(1)),
+                platform: Some(BoolFlag(1)),
+                verify_command: None,
+                release_proof_required: None,
+                codegraph_ingest_required: None,
+                notebooklm_ingest_required: None,
+            })
+            .unwrap();
+        fs::create_dir_all(repo_root.join(".harness/context")).unwrap();
+        fs::write(
+            repo_root.join(".harness/context/US-REP-context.md"),
+            "# Context",
+        )
+        .unwrap();
+        repository
+            .update_story_context_pack_path("US-REP", ".harness/context/US-REP-context.md")
+            .unwrap();
+        repository.verify_story("US-REP").unwrap();
+        repository
+            .record_trace(TraceInput {
+                task_summary: "Generated governance report".to_owned(),
+                intake_id: None,
+                story_id: Some("US-REP".to_owned()),
+                agent: Some("test".to_owned()),
+                outcome: Some("completed".to_owned()),
+                duration_seconds: Some(1),
+                token_estimate: Some(1),
+                friction: Some("none".to_owned()),
+                notes: None,
+                actions: CsvList::from_optional(Some("generate report".to_owned())),
+                files_read: CsvList::from_optional(Some("harness.db".to_owned())),
+                files_changed: CsvList::from_optional(Some(
+                    ".harness/reports/report.json".to_owned(),
+                )),
+                decisions: CsvList::from_optional(Some("read-only snapshot".to_owned())),
+                errors: CsvList::from_optional(Some("none".to_owned())),
+            })
+            .unwrap();
+        repository
+            .add_backlog(BacklogAddInput {
+                title: "Open governance dashboard follow-up".to_owned(),
+                discovered_while: None,
+                current_pain: None,
+                suggestion: None,
+                risk: Some(RiskLane::Normal),
+                predicted_impact: None,
+                notes: None,
+            })
+            .unwrap();
+        repository
+            .add_friction_event(FrictionAddInput {
+                event_id: Some("77777777-7777-4777-8777-777777777777".to_owned()),
+                story_id: Some("US-REP".to_owned()),
+                trace_id: None,
+                friction_type: FrictionType::AmbiguousPolicy,
+                severity: FrictionSeverity::High,
+                source: FrictionSource::Agent,
+                summary: "Report needs explicit read-only semantics.".to_owned(),
+                observed_at: Some("2026-06-07T00:00:00Z".to_owned()),
+                provider: None,
+                affected_paths: CsvList::from_optional(Some(
+                    "docs/GOVERNANCE_REPORT.md".to_owned(),
+                )),
+                evidence: FrictionEvidenceInput {
+                    command: Some("harness-cli governance report".to_owned()),
+                    exit_code: Some(0),
+                    artifact_path: None,
+                    report_path: Some(".harness/reports/report.json".to_owned()),
+                    details: Some("Report generation does not mutate story gates.".to_owned()),
+                },
+                proposed_action: FrictionProposedActionInput {
+                    action_type: Some(FrictionActionType::RuleProposal),
+                    title: Some("Document governance report read-only boundary".to_owned()),
+                    target_path: Some("docs/GOVERNANCE_REPORT.md".to_owned()),
+                },
+                notes: None,
+            })
+            .unwrap();
+        let connection = repository.open_existing().unwrap();
+        connection
+            .execute(
+                "UPDATE story SET arch_check_result='pass' WHERE id='US-REP';",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO release_verification (
+                    version, origin, tag, platform, result, report_path,
+                    assets_checked, story_id
+                 ) VALUES (
+                    '0.5.0', 'example/repo', 'harness-cli-v0.5.0',
+                    'windows-x64', 'pass',
+                    '.harness/release/report.json', 10, 'US-REP'
+                 );",
+                [],
+            )
+            .unwrap();
+
+        let output = repo_root.join(".harness/reports/test-governance-report.json");
+        let (path, report) = repository
+            .generate_governance_report(GovernanceReportInput {
+                output: Some(output.clone()),
+            })
+            .unwrap();
+
+        assert_eq!(path, output);
+        assert!(path.is_file());
+        assert_eq!(report.artifact_type, "governance-report");
+        assert_eq!(report.story_summary.total, 1);
+        assert_eq!(report.story_summary.implemented, 1);
+        assert_eq!(report.gate_summary.not_run, 1);
+        assert_eq!(
+            report.release_summary.latest_version.as_deref(),
+            Some("0.5.0")
+        );
+        assert_eq!(report.release_summary.release_verify_result, "pass");
+        assert_eq!(report.release_summary.assets_checked, 10);
+        assert_eq!(report.friction_summary.events, 1);
+        assert_eq!(report.friction_summary.high_severity, 1);
+        assert_eq!(report.friction_summary.open_backlog_suggestions, 1);
+        assert_eq!(report.friction_summary.open_rule_proposals, 1);
+        assert_eq!(report.validation_summary.commands[0].result, "pass");
+        assert_eq!(report.stories[0].gate_result, "not_run");
+        assert!(report.stories[0].missing_evidence.is_empty());
+
+        let value = serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(value["schema_version"], "1.0.0");
+        assert_eq!(value["stories"][0]["proof"]["unit"], true);
+
+        let stored_gate = connection
+            .query_row(
+                "SELECT gate_result FROM story WHERE id='US-REP';",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .unwrap();
+        assert_eq!(stored_gate, None);
     }
 
     #[test]

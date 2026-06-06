@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import copy
 import json
+import sys
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -130,5 +131,10 @@ expect_invalid(validator, invalid, "additional root property")
 invalid = copy.deepcopy(report)
 invalid["stories"][0].pop("gate_result")
 expect_invalid(validator, invalid, "missing gate result")
+
+for report_path in sys.argv[1:]:
+    with Path(report_path).open(encoding="utf-8") as handle:
+        generated_report = json.load(handle)
+    expect_valid(validator, generated_report, f"generated report {report_path}")
 
 print("Governance report schema and semantic fixtures passed.")

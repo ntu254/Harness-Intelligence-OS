@@ -8,9 +8,9 @@ use thiserror::Error;
 use crate::application::{
     BacklogAddInput, BacklogCloseInput, BacklogSuggestInput, BrownfieldImportResult,
     CodeGraphImpactInput, ContextIngestInput, DecisionAddInput, FrictionAddInput,
-    FrictionEvidenceInput, FrictionProposedActionInput, HarnessContext, HarnessService, InitResult,
-    IntakeInput, MigrateResult, NotebookBriefInput, QueryTable, ReleaseVerifyInput,
-    RuleSuggestInput, StoryAddInput, StoryUpdateInput, TraceInput,
+    FrictionEvidenceInput, FrictionProposedActionInput, GovernanceReportInput, HarnessContext,
+    HarnessService, InitResult, IntakeInput, MigrateResult, NotebookBriefInput, QueryTable,
+    ReleaseVerifyInput, RuleSuggestInput, StoryAddInput, StoryUpdateInput, TraceInput,
 };
 use crate::domain::{
     parse_optional_integer, path_has_any_segment, proof_display, BacklogFilter, BacklogRecord,
@@ -66,6 +66,8 @@ enum Command {
     ArchCheck(ArchCheckArgs),
     /// Verify the trusted public release distribution chain.
     Release(ReleaseArgs),
+    /// Generate governance evidence reports.
+    Governance(GovernanceArgs),
 }
 
 #[derive(Args, Debug)]
@@ -200,6 +202,24 @@ struct ReleaseVerifyArgs {
     output: Option<PathBuf>,
     #[arg(long)]
     story: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct GovernanceArgs {
+    #[command(subcommand)]
+    action: GovernanceAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum GovernanceAction {
+    /// Generate a static governance report JSON artifact.
+    Report(GovernanceReportArgs),
+}
+
+#[derive(Args, Debug)]
+struct GovernanceReportArgs {
+    #[arg(long)]
+    output: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -901,6 +921,23 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                 if report.result != ReleaseCheckResult::Pass {
                     std::process::exit(1);
                 }
+            }
+        },
+        Command::Governance(args) => match args.action {
+            GovernanceAction::Report(args) => {
+                let result = service.generate_governance_report(GovernanceReportInput {
+                    output: args.output,
+                })?;
+                println!("Governance report: {}", result.report_path.display());
+                println!("Stories: {}", result.report.story_summary.total);
+                println!("Gate pass: {}", result.report.gate_summary.pass);
+                println!("Gate fail: {}", result.report.gate_summary.fail);
+                println!("Gate not run: {}", result.report.gate_summary.not_run);
+                println!(
+                    "Release verification: {}",
+                    result.report.release_summary.release_verify_result
+                );
+                println!("Friction events: {}", result.report.friction_summary.events);
             }
         },
         Command::Story(args) => match args.action {
@@ -1886,6 +1923,15 @@ mod tests {
         assert!(release_help.contains("--version <VERSION>"));
         assert!(release_help.contains("--origin <ORIGIN>"));
         assert!(release_help.contains("--story <STORY>"));
+
+        let governance_help = command
+            .find_subcommand_mut("governance")
+            .unwrap()
+            .find_subcommand_mut("report")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(governance_help.contains("--output <OUTPUT>"));
 
         let notebook_help = command
             .find_subcommand_mut("notebooklm")

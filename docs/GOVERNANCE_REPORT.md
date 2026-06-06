@@ -8,6 +8,26 @@ The canonical schema is:
 
 - `docs/schemas/governance-report.schema.json`
 
+## Generation
+
+US-035 adds:
+
+```text
+harness-cli governance report --output .harness/reports/governance-report.json
+```
+
+If `--output` is omitted, Harness writes:
+
+```text
+.harness/reports/governance-report.json
+```
+
+Generated reports are validated by:
+
+```text
+python scripts/verify-governance-report-schema.py .harness/reports/governance-report.json
+```
+
 ## Report Shape
 
 A governance report captures:
@@ -27,6 +47,6 @@ A governance report captures:
 - `inconclusive` remains distinct from `pass`.
 - Runtime report files may live under `.harness/reports/`.
 - US-034 defines the schema only.
-- US-035 implements report generation.
+- US-035 implements report generation only.
 - US-036 adds maturity scoring.
 - US-037 exports static dashboard files.

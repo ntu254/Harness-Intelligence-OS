@@ -586,6 +586,92 @@ pub struct HarnessStats {
     pub traces: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GovernanceReport {
+    pub schema_version: String,
+    pub artifact_type: String,
+    pub report_id: String,
+    pub generated_at: String,
+    pub repository: GovernanceRepository,
+    pub story_summary: GovernanceStorySummary,
+    pub gate_summary: GovernanceGateSummary,
+    pub validation_summary: GovernanceValidationSummary,
+    pub release_summary: GovernanceReleaseSummary,
+    pub friction_summary: GovernanceFrictionSummary,
+    pub stories: Vec<GovernanceStoryRow>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GovernanceRepository {
+    pub origin: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GovernanceStorySummary {
+    pub total: i64,
+    pub implemented: i64,
+    pub in_progress: i64,
+    pub blocked: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GovernanceGateSummary {
+    pub pass: i64,
+    pub fail: i64,
+    pub not_run: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GovernanceValidationSummary {
+    pub commands: Vec<GovernanceValidationCommand>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GovernanceValidationCommand {
+    pub command: String,
+    pub result: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GovernanceReleaseSummary {
+    pub latest_version: Option<String>,
+    pub release_verify_result: String,
+    pub assets_checked: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GovernanceFrictionSummary {
+    pub events: i64,
+    pub high_severity: i64,
+    pub open_backlog_suggestions: i64,
+    pub open_rule_proposals: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GovernanceStoryRow {
+    pub story_id: String,
+    pub status: String,
+    pub risk_lane: String,
+    pub proof: GovernanceProof,
+    pub gate_result: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub missing_evidence: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GovernanceProof {
+    pub unit: bool,
+    pub integration: bool,
+    pub e2e: bool,
+    pub platform: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CsvList(pub Option<String>);
 

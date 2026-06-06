@@ -4,9 +4,9 @@ use crate::domain::{
     ArchitectureCheckResult, BacklogFilter, BacklogRecord, BacklogSuggestionRecord, BoolFlag,
     CodeGraphMode, ContextIngestReport, ContextSource, CsvList, DecisionRecord, FrictionActionType,
     FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionSource, FrictionType,
-    HarnessStats, InputType, IntakeRecord, MappedContext, ReleaseVerificationReport, RiskLane,
-    RuleProposalRecord, StoryGateResult, StoryMatrixRecord, StoryVerifyStatus, TraceRecord,
-    TraceScoreResult,
+    GovernanceReport, HarnessStats, InputType, IntakeRecord, MappedContext,
+    ReleaseVerificationReport, RiskLane, RuleProposalRecord, StoryGateResult, StoryMatrixRecord,
+    StoryVerifyStatus, TraceRecord, TraceScoreResult,
 };
 use crate::infrastructure::{HarnessRepository, SqliteHarnessRepository};
 
@@ -160,6 +160,17 @@ pub struct ReleaseVerifyInput {
 }
 
 #[derive(Debug)]
+pub struct GovernanceReportInput {
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub struct GovernanceReportResult {
+    pub report_path: PathBuf,
+    pub report: GovernanceReport,
+}
+
+#[derive(Debug)]
 pub struct DecisionAddInput {
     pub id: String,
     pub title: String,
@@ -307,6 +318,17 @@ impl HarnessService {
         input: ReleaseVerifyInput,
     ) -> crate::infrastructure::Result<(PathBuf, ReleaseVerificationReport)> {
         self.repository.verify_release(input)
+    }
+
+    pub fn generate_governance_report(
+        &self,
+        input: GovernanceReportInput,
+    ) -> crate::infrastructure::Result<GovernanceReportResult> {
+        let (report_path, report) = self.repository.generate_governance_report(input)?;
+        Ok(GovernanceReportResult {
+            report_path,
+            report,
+        })
     }
 
     pub fn ingest_context(
