@@ -343,6 +343,18 @@ pub struct BacklogSuggestionRecord {
     pub suggestion: String,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct RuleProposalRecord {
+    pub title: String,
+    pub friction_type: String,
+    pub severity: String,
+    pub event_count: i64,
+    pub target: String,
+    pub stories: String,
+    pub rationale: String,
+    pub proposal: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BacklogFilter {
     All,

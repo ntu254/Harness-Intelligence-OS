@@ -9,16 +9,16 @@ use crate::application::{
     BacklogAddInput, BacklogCloseInput, BacklogSuggestInput, BrownfieldImportResult,
     CodeGraphImpactInput, ContextIngestInput, DecisionAddInput, FrictionAddInput,
     FrictionEvidenceInput, FrictionProposedActionInput, HarnessContext, HarnessService, InitResult,
-    IntakeInput, MigrateResult, NotebookBriefInput, QueryTable, ReleaseVerifyInput, StoryAddInput,
-    StoryUpdateInput, TraceInput,
+    IntakeInput, MigrateResult, NotebookBriefInput, QueryTable, ReleaseVerifyInput,
+    RuleSuggestInput, StoryAddInput, StoryUpdateInput, TraceInput,
 };
 use crate::domain::{
     parse_optional_integer, path_has_any_segment, proof_display, BacklogFilter, BacklogRecord,
     BacklogSuggestionRecord, BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList,
     DecisionRecord, FrictionActionType, FrictionEventRecord, FrictionRecord, FrictionSeverity,
     FrictionSource, FrictionType, HarnessStats, InputType, IntakeRecord, MappedContext,
-    ReleaseCheckResult, RiskLane, StoryMatrixRecord, TraceQualityTier, TraceRecord,
-    TraceScoreResult, RISK_LANE_HELP,
+    ReleaseCheckResult, RiskLane, RuleProposalRecord, StoryMatrixRecord, TraceQualityTier,
+    TraceRecord, TraceScoreResult, RISK_LANE_HELP,
 };
 
 #[derive(Parser, Debug)]
@@ -46,6 +46,8 @@ enum Command {
     Decision(DecisionArgs),
     /// Add or close a backlog item.
     Backlog(BacklogArgs),
+    /// Suggest Harness rule improvements from structured friction.
+    Rules(RulesArgs),
     /// Record an agent execution trace.
     Trace(TraceArgs),
     /// Capture structured Harness friction events.
@@ -275,6 +277,34 @@ struct BacklogCloseArgs {
 
 #[derive(Args, Debug)]
 struct BacklogSuggestArgs {
+    #[arg(long)]
+    story: Option<String>,
+    #[arg(long = "type", value_name = "FRICTION_TYPE")]
+    friction_type: Option<String>,
+    #[arg(
+        long = "min-severity",
+        value_name = "low|medium|high",
+        default_value = "medium"
+    )]
+    min_severity: String,
+    #[arg(long, default_value = "10")]
+    limit: String,
+}
+
+#[derive(Args, Debug)]
+struct RulesArgs {
+    #[command(subcommand)]
+    action: RulesAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum RulesAction {
+    /// Suggest rule-improvement proposals without editing policy files.
+    Suggest(RulesSuggestArgs),
+}
+
+#[derive(Args, Debug)]
+struct RulesSuggestArgs {
     #[arg(long)]
     story: Option<String>,
     #[arg(long = "type", value_name = "FRICTION_TYPE")]
@@ -1010,6 +1040,21 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                 print_backlog_suggestions(&suggestions);
             }
         },
+        Command::Rules(args) => match args.action {
+            RulesAction::Suggest(args) => {
+                let limit = parse_positive_integer("rules suggest: --limit", &args.limit)?;
+                let proposals = service.suggest_rules(RuleSuggestInput {
+                    story_id: args.story,
+                    friction_type: args
+                        .friction_type
+                        .map(|value| FrictionType::from_str(&value))
+                        .transpose()?,
+                    min_severity: FrictionSeverity::from_str(&args.min_severity)?,
+                    limit,
+                })?;
+                print_rule_proposals(&proposals);
+            }
+        },
         Command::Trace(args) => {
             let story_id = args.story.clone();
             let id = service.record_trace(TraceInput {
@@ -1445,6 +1490,37 @@ fn print_backlog_suggestions(records: &[BacklogSuggestionRecord]) {
     );
 }
 
+fn print_rule_proposals(records: &[RuleProposalRecord]) {
+    let rows = records
+        .iter()
+        .map(|record| {
+            vec![
+                record.title.clone(),
+                record.friction_type.clone(),
+                record.severity.clone(),
+                record.event_count.to_string(),
+                record.target.clone(),
+                record.stories.clone(),
+                record.rationale.clone(),
+                record.proposal.clone(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    print_table(
+        &[
+            "title",
+            "friction_type",
+            "severity",
+            "events",
+            "target",
+            "stories",
+            "rationale",
+            "proposal",
+        ],
+        &rows,
+    );
+}
+
 fn print_decisions(records: &[DecisionRecord]) {
     let rows = records
         .iter()
@@ -1769,6 +1845,16 @@ mod tests {
             .to_string();
         assert!(backlog_suggest_help.contains("--min-severity <low|medium|high>"));
         assert!(backlog_suggest_help.contains("--type <FRICTION_TYPE>"));
+
+        let rules_suggest_help = command
+            .find_subcommand_mut("rules")
+            .unwrap()
+            .find_subcommand_mut("suggest")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(rules_suggest_help.contains("--min-severity <low|medium|high>"));
+        assert!(rules_suggest_help.contains("--type <FRICTION_TYPE>"));
 
         let friction_add_help = command
             .find_subcommand_mut("friction")

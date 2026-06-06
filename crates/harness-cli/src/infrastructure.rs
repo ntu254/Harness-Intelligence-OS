@@ -16,8 +16,8 @@ use crate::application::{
     BrownfieldImportResult, CodeGraphImpactInput, CodeGraphImpactResult, ContextIngestInput,
     ContextIngestSummary, ContextPackData, DecisionAddInput, DecisionVerifyResult,
     FrictionAddInput, HarnessContext, InitResult, IntakeInput, MigrateResult, NotebookBriefInput,
-    NotebookBriefResult, QueryTable, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput,
-    StoryVerifyResult, TraceInput,
+    NotebookBriefResult, QueryTable, ReleaseVerifyInput, RuleSuggestInput, StoryAddInput,
+    StoryUpdateInput, StoryVerifyResult, TraceInput,
 };
 use crate::domain::{
     normalize_token, path_has_any_segment, score_trace, ArchitectureCheckResult,
@@ -26,8 +26,8 @@ use crate::domain::{
     ContextIngestReport, ContextIngestStatus, ContextSource, ContextSourceArtifact, DecisionRecord,
     FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionType, HarnessStats,
     IntakeRecord, MappedContext, ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig,
-    ReleaseVerificationReport, RiskLane, StoryGateResult, StoryMatrixRecord, StoryVerifyStatus,
-    TraceRecord, TraceScoreResult, TraceScoreSource,
+    ReleaseVerificationReport, RiskLane, RuleProposalRecord, StoryGateResult, StoryMatrixRecord,
+    StoryVerifyStatus, TraceRecord, TraceScoreResult, TraceScoreSource,
 };
 
 pub type Result<T> = std::result::Result<T, HarnessInfraError>;
@@ -113,6 +113,7 @@ pub trait HarnessRepository {
     fn add_backlog(&self, input: BacklogAddInput) -> Result<i64>;
     fn close_backlog(&self, input: BacklogCloseInput) -> Result<()>;
     fn suggest_backlog(&self, input: BacklogSuggestInput) -> Result<Vec<BacklogSuggestionRecord>>;
+    fn suggest_rules(&self, input: RuleSuggestInput) -> Result<Vec<RuleProposalRecord>>;
     fn record_trace(&self, input: TraceInput) -> Result<i64>;
     fn add_friction_event(&self, input: FrictionAddInput) -> Result<i64>;
     fn score_trace(&self, id: Option<i64>) -> Result<TraceScoreResult>;
@@ -1669,6 +1670,110 @@ impl HarnessRepository for SqliteHarnessRepository {
         Ok(suggestions)
     }
 
+    fn suggest_rules(&self, input: RuleSuggestInput) -> Result<Vec<RuleProposalRecord>> {
+        let connection = self.open_existing()?;
+        let mut statement = connection.prepare(
+            "SELECT friction_type, severity, story_id, summary,
+                    proposed_action_json, provider
+             FROM friction_event
+             ORDER BY id DESC;",
+        )?;
+        let rows = collect_rows(statement.query_map([], |row| {
+            Ok(BacklogSuggestionSource {
+                friction_type: row.get(0)?,
+                severity: row.get(1)?,
+                story_id: row.get(2)?,
+                summary: row.get(3)?,
+                proposed_action_json: row.get(4)?,
+                provider: row.get(5)?,
+            })
+        })?)?;
+
+        let mut grouped = BTreeMap::<(String, String), RuleProposalAccumulator>::new();
+        let type_filter = input
+            .friction_type
+            .map(|value| value.as_db_value().to_owned());
+        let min_rank = input.min_severity.rank();
+
+        for row in rows {
+            if let Some(story_id) = &input.story_id {
+                if row.story_id.as_deref() != Some(story_id) {
+                    continue;
+                }
+            }
+            if let Some(friction_type) = &type_filter {
+                if &row.friction_type != friction_type {
+                    continue;
+                }
+            }
+            let row_rank = severity_rank(&row.severity);
+            if row_rank < min_rank {
+                continue;
+            }
+
+            let proposed = proposed_rule_action(&row.proposed_action_json);
+            let target = proposed
+                .as_ref()
+                .and_then(|action| action.target_path.clone())
+                .unwrap_or_else(|| {
+                    default_rule_target(&row.friction_type, row.story_id.as_deref())
+                });
+            let title = proposed
+                .as_ref()
+                .and_then(|action| action.title.clone())
+                .unwrap_or_else(|| derived_rule_proposal_title(&row.friction_type, &target));
+            let proposal = format!("Review `{target}` and update it only after human approval.");
+            let key = (title.clone(), target.clone());
+            let entry = grouped
+                .entry(key)
+                .or_insert_with(|| RuleProposalAccumulator {
+                    title,
+                    friction_type: row.friction_type.clone(),
+                    severity: row.severity.clone(),
+                    severity_rank: row_rank,
+                    event_count: 0,
+                    target,
+                    stories: BTreeSet::new(),
+                    rationale: row.summary.clone(),
+                    proposal,
+                });
+            entry.event_count += 1;
+            if row_rank > entry.severity_rank {
+                entry.severity = row.severity.clone();
+                entry.severity_rank = row_rank;
+            }
+            if let Some(story_id) = row.story_id {
+                entry.stories.insert(story_id);
+            }
+        }
+
+        let mut proposals = grouped
+            .into_values()
+            .map(|entry| RuleProposalRecord {
+                title: entry.title,
+                friction_type: entry.friction_type,
+                severity: entry.severity,
+                event_count: entry.event_count,
+                target: entry.target,
+                stories: if entry.stories.is_empty() {
+                    "-".to_owned()
+                } else {
+                    entry.stories.into_iter().collect::<Vec<_>>().join(",")
+                },
+                rationale: entry.rationale,
+                proposal: entry.proposal,
+            })
+            .collect::<Vec<_>>();
+        proposals.sort_by(|left, right| {
+            severity_rank(&right.severity)
+                .cmp(&severity_rank(&left.severity))
+                .then_with(|| right.event_count.cmp(&left.event_count))
+                .then_with(|| left.title.cmp(&right.title))
+        });
+        proposals.truncate(input.limit);
+        Ok(proposals)
+    }
+
     fn record_trace(&self, input: TraceInput) -> Result<i64> {
         let connection = self.open_existing()?;
         connection.execute(
@@ -2460,6 +2565,25 @@ struct ProposedBacklogAction {
     target_path: Option<String>,
 }
 
+#[derive(Debug)]
+struct RuleProposalAccumulator {
+    title: String,
+    friction_type: String,
+    severity: String,
+    severity_rank: i64,
+    event_count: i64,
+    target: String,
+    stories: BTreeSet<String>,
+    rationale: String,
+    proposal: String,
+}
+
+#[derive(Debug)]
+struct ProposedRuleAction {
+    title: Option<String>,
+    target_path: Option<String>,
+}
+
 fn severity_rank(value: &str) -> i64 {
     match value {
         "high" => 3,
@@ -2488,6 +2612,25 @@ fn proposed_backlog_action(value: &Option<String>) -> Option<ProposedBacklogActi
     })
 }
 
+fn proposed_rule_action(value: &Option<String>) -> Option<ProposedRuleAction> {
+    let value = value.as_deref()?;
+    let object = serde_json::from_str::<serde_json::Value>(value).ok()?;
+    let object = object.as_object()?;
+    if object.get("action_type").and_then(|value| value.as_str()) != Some("rule_proposal") {
+        return None;
+    }
+    Some(ProposedRuleAction {
+        title: object
+            .get("title")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned),
+        target_path: object
+            .get("target_path")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned),
+    })
+}
+
 fn derived_backlog_suggestion_title(
     friction_type: &str,
     summary: &str,
@@ -2505,6 +2648,36 @@ fn derived_backlog_suggestion_title(
         "schema_gap" => "Revise artifact schema".to_owned(),
         "architecture_rule_gap" => "Update architecture rule".to_owned(),
         _ => summary.chars().take(80).collect(),
+    }
+}
+
+fn default_rule_target(friction_type: &str, story_id: Option<&str>) -> String {
+    match friction_type {
+        "ambiguous_policy" => "docs/HARNESS.md".to_owned(),
+        "architecture_rule_gap" => "harness-architecture.toml".to_owned(),
+        "schema_gap" => "docs/schemas/".to_owned(),
+        "weak_validation" => story_id
+            .map(|id| format!("docs/stories/{id}/validation.md"))
+            .unwrap_or_else(|| "docs/TEST_MATRIX.md".to_owned()),
+        "missing_context" => "docs/CONTEXT_RULES.md".to_owned(),
+        "provider_unavailable" => "docs/HARNESS.md".to_owned(),
+        "release_gap" => "docs/stories/US-033/overview.md".to_owned(),
+        "repeated_manual_step" => "docs/HARNESS.md".to_owned(),
+        _ => "docs/HARNESS.md".to_owned(),
+    }
+}
+
+fn derived_rule_proposal_title(friction_type: &str, target: &str) -> String {
+    match friction_type {
+        "ambiguous_policy" => format!("Clarify Harness policy in {target}"),
+        "architecture_rule_gap" => format!("Update architecture rule in {target}"),
+        "schema_gap" => format!("Revise schema contract in {target}"),
+        "weak_validation" => format!("Strengthen validation rule in {target}"),
+        "missing_context" => format!("Clarify context rule in {target}"),
+        "provider_unavailable" => format!("Document provider preflight in {target}"),
+        "release_gap" => format!("Clarify release hardening in {target}"),
+        "repeated_manual_step" => format!("Document automation candidate in {target}"),
+        _ => format!("Review Harness rule in {target}"),
     }
 }
 
@@ -5169,7 +5342,8 @@ mod tests {
         BacklogAddInput, BacklogCloseInput, BacklogSuggestInput, CodeGraphImpactInput,
         ContextIngestInput, DecisionAddInput, FrictionAddInput, FrictionEvidenceInput,
         FrictionProposedActionInput, HarnessContext, HarnessService, IntakeInput,
-        NotebookBriefInput, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, TraceInput,
+        NotebookBriefInput, ReleaseVerifyInput, RuleSuggestInput, StoryAddInput, StoryUpdateInput,
+        TraceInput,
     };
     use crate::domain::{
         BacklogFilter, BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList,
@@ -6667,6 +6841,94 @@ mod tests {
         assert_eq!(
             repository.query_backlog(BacklogFilter::All).unwrap(),
             before
+        );
+    }
+
+    #[test]
+    fn rule_suggestions_group_friction_without_mutating_policy_state() {
+        let (_temp_dir, repository) = test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-RULE", 0, 0);
+        repository
+            .add_decision(DecisionAddInput {
+                id: "0001-existing".to_owned(),
+                title: "Existing decision".to_owned(),
+                status: "accepted".to_owned(),
+                doc_path: None,
+                verify_command: None,
+                predicted_impact: None,
+                notes: None,
+            })
+            .unwrap();
+        let decisions_before = repository.query_decisions().unwrap();
+        let backlog_before = repository.query_backlog(BacklogFilter::All).unwrap();
+
+        for (index, severity) in [FrictionSeverity::High, FrictionSeverity::Medium]
+            .into_iter()
+            .enumerate()
+        {
+            repository
+                .add_friction_event(FrictionAddInput {
+                    event_id: Some(format!("66666666-6666-4666-8666-66666666666{}", index + 1)),
+                    story_id: Some("US-RULE".to_owned()),
+                    trace_id: None,
+                    friction_type: FrictionType::AmbiguousPolicy,
+                    severity,
+                    source: FrictionSource::Agent,
+                    summary: "Rule suggestion must remain human-reviewed.".to_owned(),
+                    observed_at: Some("2026-06-07T00:00:00Z".to_owned()),
+                    provider: None,
+                    affected_paths: CsvList::from_optional(Some("docs/HARNESS.md".to_owned())),
+                    evidence: FrictionEvidenceInput {
+                        command: Some("harness-cli rules suggest --help".to_owned()),
+                        exit_code: Some(0),
+                        artifact_path: None,
+                        report_path: None,
+                        details: Some("Read-only rule proposal boundary.".to_owned()),
+                    },
+                    proposed_action: FrictionProposedActionInput {
+                        action_type: Some(FrictionActionType::RuleProposal),
+                        title: Some("Document read-only rule suggestion boundary".to_owned()),
+                        target_path: Some("docs/HARNESS.md".to_owned()),
+                    },
+                    notes: None,
+                })
+                .unwrap();
+        }
+
+        let proposals = repository
+            .suggest_rules(RuleSuggestInput {
+                story_id: Some("US-RULE".to_owned()),
+                friction_type: Some(FrictionType::AmbiguousPolicy),
+                min_severity: FrictionSeverity::Medium,
+                limit: 10,
+            })
+            .unwrap();
+
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(
+            proposals[0].title,
+            "Document read-only rule suggestion boundary"
+        );
+        assert_eq!(proposals[0].target, "docs/HARNESS.md");
+        assert_eq!(proposals[0].severity, "high");
+        assert_eq!(proposals[0].event_count, 2);
+        assert_eq!(proposals[0].stories, "US-RULE");
+
+        let unrelated = repository
+            .suggest_rules(RuleSuggestInput {
+                story_id: Some("US-RULE".to_owned()),
+                friction_type: Some(FrictionType::SchemaGap),
+                min_severity: FrictionSeverity::Low,
+                limit: 10,
+            })
+            .unwrap();
+        assert!(unrelated.is_empty());
+
+        assert_eq!(repository.query_decisions().unwrap(), decisions_before);
+        assert_eq!(
+            repository.query_backlog(BacklogFilter::All).unwrap(),
+            backlog_before
         );
     }
 

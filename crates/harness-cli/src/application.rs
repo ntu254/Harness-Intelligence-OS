@@ -5,7 +5,8 @@ use crate::domain::{
     CodeGraphMode, ContextIngestReport, ContextSource, CsvList, DecisionRecord, FrictionActionType,
     FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionSource, FrictionType,
     HarnessStats, InputType, IntakeRecord, MappedContext, ReleaseVerificationReport, RiskLane,
-    StoryGateResult, StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
+    RuleProposalRecord, StoryGateResult, StoryMatrixRecord, StoryVerifyStatus, TraceRecord,
+    TraceScoreResult,
 };
 use crate::infrastructure::{HarnessRepository, SqliteHarnessRepository};
 
@@ -189,6 +190,14 @@ pub struct BacklogCloseInput {
 
 #[derive(Debug)]
 pub struct BacklogSuggestInput {
+    pub story_id: Option<String>,
+    pub friction_type: Option<FrictionType>,
+    pub min_severity: FrictionSeverity,
+    pub limit: usize,
+}
+
+#[derive(Debug)]
+pub struct RuleSuggestInput {
     pub story_id: Option<String>,
     pub friction_type: Option<FrictionType>,
     pub min_severity: FrictionSeverity,
@@ -390,6 +399,13 @@ impl HarnessService {
         input: BacklogSuggestInput,
     ) -> crate::infrastructure::Result<Vec<BacklogSuggestionRecord>> {
         self.repository.suggest_backlog(input)
+    }
+
+    pub fn suggest_rules(
+        &self,
+        input: RuleSuggestInput,
+    ) -> crate::infrastructure::Result<Vec<RuleProposalRecord>> {
+        self.repository.suggest_rules(input)
     }
 
     pub fn query_decisions(&self) -> crate::infrastructure::Result<Vec<DecisionRecord>> {

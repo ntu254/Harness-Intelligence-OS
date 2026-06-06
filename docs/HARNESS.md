@@ -261,6 +261,9 @@ durable structured evidence for later review.
 Use `scripts/bin/harness-cli backlog suggest` to review read-only backlog
 candidates from structured friction; create backlog rows explicitly with
 `backlog add` after human review.
+Use `scripts/bin/harness-cli rules suggest` to review read-only rule
+improvement proposals; edit policy, decisions, schemas, or architecture rules
+only after explicit human approval.
 
 Backlog risk uses the same lane vocabulary as intake and stories:
 `tiny`, `normal`, or `high-risk`. Use `--risk tiny` for low-risk follow-up
