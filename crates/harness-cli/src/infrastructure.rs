@@ -11,14 +11,17 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::application::{
-    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, ContextPackData, DecisionAddInput,
-    DecisionVerifyResult, HarnessContext, InitResult, IntakeInput, MigrateResult, QueryTable,
-    ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput,
+    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, ContextIngestInput,
+    ContextIngestSummary, ContextPackData, DecisionAddInput, DecisionVerifyResult, HarnessContext,
+    InitResult, IntakeInput, MigrateResult, QueryTable, ReleaseVerifyInput, StoryAddInput,
+    StoryUpdateInput, StoryVerifyResult, TraceInput,
 };
 use crate::domain::{
     normalize_token, score_trace, ArchitectureCheckResult, ArchitectureConfig,
-    ArchitectureViolation, BacklogFilter, BacklogRecord, DecisionRecord, FrictionRecord,
-    HarnessStats, IntakeRecord, ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig,
+    ArchitectureViolation, BacklogFilter, BacklogRecord, ContextIngestDiagnostic,
+    ContextIngestGovernance, ContextIngestReport, ContextIngestStatus, ContextSource,
+    ContextSourceArtifact, DecisionRecord, FrictionRecord, HarnessStats, IntakeRecord,
+    MappedContext, ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig,
     ReleaseVerificationReport, RiskLane, StoryGateResult, StoryMatrixRecord, StoryVerifyStatus,
     TraceRecord, TraceScoreResult, TraceScoreSource,
 };
@@ -58,6 +61,8 @@ pub enum HarnessInfraError {
     InvalidReleaseConfig(String),
     #[error("release verification input is invalid: {0}")]
     InvalidReleaseInput(String),
+    #[error("context ingest input is invalid: {0}")]
+    InvalidContextIngest(String),
     #[error("backlog close: backlog item '{0}' not found")]
     BacklogNotFound(i64),
     #[error("trace '{0}' not found")]
@@ -85,6 +90,7 @@ pub trait HarnessRepository {
         &self,
         input: ReleaseVerifyInput,
     ) -> Result<(PathBuf, ReleaseVerificationReport)>;
+    fn ingest_context(&self, input: ContextIngestInput) -> Result<(PathBuf, ContextIngestReport)>;
     fn check_architecture(
         &self,
         config_path: Option<PathBuf>,
@@ -494,8 +500,9 @@ impl HarnessRepository for SqliteHarnessRepository {
         connection.execute(
             "INSERT INTO story (
                 id, title, risk_lane, contract_doc, verify_command, notes,
-                release_proof_required
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);",
+                release_proof_required, codegraph_ingest_required,
+                notebooklm_ingest_required
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);",
             params![
                 input.id,
                 input.title,
@@ -504,6 +511,8 @@ impl HarnessRepository for SqliteHarnessRepository {
                 input.verify_command,
                 input.notes,
                 input.release_proof_required.0,
+                input.codegraph_ingest_required.0,
+                input.notebooklm_ingest_required.0,
             ],
         )?;
         Ok(())
@@ -518,6 +527,8 @@ impl HarnessRepository for SqliteHarnessRepository {
             && input.platform.is_none()
             && input.verify_command.is_none()
             && input.release_proof_required.is_none()
+            && input.codegraph_ingest_required.is_none()
+            && input.notebooklm_ingest_required.is_none()
         {
             return Err(HarnessInfraError::EmptyStoryUpdate);
         }
@@ -532,8 +543,10 @@ impl HarnessRepository for SqliteHarnessRepository {
                 e2e_proof=COALESCE(?5, e2e_proof),
                 platform_proof=COALESCE(?6, platform_proof),
                 verify_command=COALESCE(?7, verify_command),
-                release_proof_required=COALESCE(?8, release_proof_required)
-             WHERE id=?9;",
+                release_proof_required=COALESCE(?8, release_proof_required),
+                codegraph_ingest_required=COALESCE(?9, codegraph_ingest_required),
+                notebooklm_ingest_required=COALESCE(?10, notebooklm_ingest_required)
+             WHERE id=?11;",
             params![
                 input.status,
                 input.evidence,
@@ -543,6 +556,8 @@ impl HarnessRepository for SqliteHarnessRepository {
                 input.platform.map(|value| value.0),
                 input.verify_command,
                 input.release_proof_required.map(|value| value.0),
+                input.codegraph_ingest_required.map(|value| value.0),
+                input.notebooklm_ingest_required.map(|value| value.0),
                 input.id,
             ],
         )?;
@@ -600,7 +615,8 @@ impl HarnessRepository for SqliteHarnessRepository {
                 "SELECT risk_lane, context_pack_path, arch_check_result,
                         last_verified_result, evidence, unit_proof,
                         integration_proof, e2e_proof, platform_proof,
-                        release_proof_required
+                        release_proof_required, codegraph_ingest_required,
+                        notebooklm_ingest_required
                  FROM story WHERE id=?1;",
                 params![id],
                 |row| {
@@ -615,6 +631,8 @@ impl HarnessRepository for SqliteHarnessRepository {
                         row.get::<_, i64>(7)?,
                         row.get::<_, i64>(8)?,
                         row.get::<_, i64>(9)?,
+                        row.get::<_, i64>(10)?,
+                        row.get::<_, i64>(11)?,
                     ))
                 },
             )
@@ -686,6 +704,24 @@ impl HarnessRepository for SqliteHarnessRepository {
             )? == 1;
             if !release_pass {
                 missing.push("release verification proof".to_owned());
+            }
+        }
+        for (required, source, label) in [
+            (story.10, "codegraph", "CodeGraph context ingest proof"),
+            (story.11, "notebooklm", "NotebookLM context ingest proof"),
+        ] {
+            if required == 1 {
+                let ingest_pass = connection.query_row(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM context_ingest
+                        WHERE story_id=?1 AND source=?2 AND result='pass'
+                     );",
+                    params![id, source],
+                    |row| row.get::<_, i64>(0),
+                )? == 1;
+                if !ingest_pass {
+                    missing.push(label.to_owned());
+                }
             }
         }
 
@@ -808,6 +844,127 @@ impl HarnessRepository for SqliteHarnessRepository {
                 input.story_id,
             ],
         )?;
+
+        Ok((output_path, report))
+    }
+
+    fn ingest_context(&self, input: ContextIngestInput) -> Result<(PathBuf, ContextIngestReport)> {
+        let connection = self.open_existing()?;
+        let story_exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM story WHERE id=?1);",
+            params![input.story_id],
+            |row| row.get::<_, i64>(0),
+        )? == 1;
+        if !story_exists {
+            return Err(HarnessInfraError::StoryNotFound(input.story_id));
+        }
+        if !input.file.is_file() {
+            return Err(HarnessInfraError::InvalidContextIngest(format!(
+                "artifact file does not exist: {}",
+                input.file.display()
+            )));
+        }
+
+        let bytes = fs::read(&input.file)?;
+        let artifact_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let artifact_path = path_for_storage(&self.repo_root, &input.file);
+        let checked_at =
+            connection.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now');", [], |row| {
+                row.get::<_, String>(0)
+            })?;
+        let mut validation =
+            validate_context_artifact(input.source, &input.story_id, &bytes, &artifact_sha256);
+        let intake_exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM intake WHERE story_id=?1);",
+            params![input.story_id],
+            |row| row.get::<_, i64>(0),
+        )? == 1;
+        if validation.status == ContextIngestStatus::Pass && !intake_exists {
+            validation.status = ContextIngestStatus::Fail;
+            validation.mapped_context = None;
+            validation.diagnostics.push(diagnostic(
+                "INTAKE_NOT_FOUND",
+                "passing context cannot be mapped because the story has no linked intake",
+            ));
+        }
+        let output_path = input.output.unwrap_or_else(|| {
+            self.repo_root.join(format!(
+                ".harness/context/{}-{}-ingest-result.json",
+                input.story_id,
+                input.source.as_db_value()
+            ))
+        });
+        let ingest_id = uuid_from_sha256(&format!(
+            "{}:{}:{}",
+            input.story_id,
+            input.source.as_db_value(),
+            artifact_sha256
+        ));
+        let eligible = validation.status == ContextIngestStatus::Pass;
+        let report = ContextIngestReport {
+            schema_version: "1.0.0".to_owned(),
+            artifact_type: "context-ingest-result".to_owned(),
+            ingest_id,
+            story_id: input.story_id.clone(),
+            source: input.source,
+            source_artifact: ContextSourceArtifact {
+                artifact_type: input.source.artifact_type().to_owned(),
+                artifact_id: validation.artifact_id.clone(),
+                schema_version: validation.schema_version.clone(),
+                path: artifact_path.clone(),
+                sha256: artifact_sha256.clone(),
+            },
+            status: validation.status,
+            checked_at,
+            mapped_context: validation.mapped_context.clone(),
+            diagnostics: validation.diagnostics.clone(),
+            governance: ContextIngestGovernance {
+                eligible_for_intake: eligible,
+                eligible_for_context_pack: eligible,
+                eligible_for_story_verify: eligible,
+            },
+        };
+
+        write_context_ingest_report(&output_path, &report)?;
+        let report_path = path_for_storage(&self.repo_root, &output_path);
+        let failure = if validation.diagnostics.is_empty() {
+            None
+        } else {
+            Some(
+                validation
+                    .diagnostics
+                    .iter()
+                    .map(|item| format!("{}: {}", item.code, item.message))
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
+        };
+        let transaction = connection.unchecked_transaction()?;
+        transaction.execute(
+            "INSERT INTO context_ingest (
+                story_id, source, artifact_type, artifact_id, artifact_path,
+                artifact_sha256, schema_version, result, provenance_status,
+                summary, report_path, failure
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12);",
+            params![
+                input.story_id,
+                input.source.as_db_value(),
+                input.source.artifact_type(),
+                validation.artifact_id,
+                artifact_path,
+                artifact_sha256,
+                validation.schema_version,
+                validation.status.as_db_value(),
+                validation.provenance_status.as_db_value(),
+                validation.summary,
+                report_path,
+                failure,
+            ],
+        )?;
+        if let Some(mapped) = &validation.mapped_context {
+            update_intake_from_mapped_context(&transaction, &input.story_id, mapped)?;
+        }
+        transaction.commit()?;
 
         Ok((output_path, report))
     }
@@ -1309,6 +1466,30 @@ impl HarnessRepository for SqliteHarnessRepository {
             Some(i) => (Some(i.0), Some(i.1), i.2, i.3, i.4, i.5, i.6),
             None => (None, None, None, None, None, None, None),
         };
+        let mut ingest_statement = connection.prepare(
+            "SELECT source, result, schema_version, artifact_path,
+                    artifact_sha256, summary, report_path, checked_at
+             FROM context_ingest
+             WHERE story_id=?1
+               AND id IN (
+                 SELECT MAX(id) FROM context_ingest
+                 WHERE story_id=?1 GROUP BY source
+               )
+             ORDER BY source;",
+        )?;
+        let context_ingests =
+            collect_rows(ingest_statement.query_map(params![story_id], |row| {
+                Ok(ContextIngestSummary {
+                    source: row.get(0)?,
+                    result: row.get(1)?,
+                    schema_version: row.get(2)?,
+                    artifact_path: row.get(3)?,
+                    artifact_sha256: row.get(4)?,
+                    summary: row.get(5)?,
+                    report_path: row.get(6)?,
+                    checked_at: row.get(7)?,
+                })
+            })?)?;
 
         Ok(ContextPackData {
             story_id: story.0,
@@ -1325,6 +1506,7 @@ impl HarnessRepository for SqliteHarnessRepository {
             intake_notes,
             code_impact_summary,
             grounded_context,
+            context_ingests,
         })
     }
 
@@ -1757,6 +1939,932 @@ fn sql_value_to_string(value: ValueRef<'_>) -> String {
     }
 }
 
+#[derive(Clone, Debug)]
+struct ContextArtifactValidation {
+    artifact_id: String,
+    schema_version: String,
+    status: ContextIngestStatus,
+    provenance_status: ContextIngestStatus,
+    summary: Option<String>,
+    mapped_context: Option<MappedContext>,
+    diagnostics: Vec<ContextIngestDiagnostic>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactInputRef {
+    uri: String,
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodeGraphProvenance {
+    provider: String,
+    adapter: String,
+    adapter_version: String,
+    invocation_id: String,
+    repository: String,
+    revision: String,
+    inputs: Vec<ArtifactInputRef>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodeGraphAffectedFile {
+    path: String,
+    change_kind: String,
+    reasons: Vec<String>,
+    #[serde(default)]
+    symbols: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodeGraphDependencyEdge {
+    from: String,
+    to: String,
+    kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactClaim {
+    claim_id: String,
+    statement: String,
+    evidence_refs: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodeGraphImpact {
+    summary: String,
+    affected_files: Vec<CodeGraphAffectedFile>,
+    #[serde(default)]
+    dependency_edges: Vec<CodeGraphDependencyEdge>,
+    risk_flags: Vec<String>,
+    claims: Vec<ArtifactClaim>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactError {
+    code: String,
+    message: String,
+    retryable: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactUnavailable {
+    reason: String,
+    retryable: bool,
+    detail: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CodeGraphArtifact {
+    schema_version: String,
+    artifact_type: String,
+    artifact_id: String,
+    story_id: String,
+    status: ContextIngestStatus,
+    generated_at: String,
+    provenance: CodeGraphProvenance,
+    impact: Option<CodeGraphImpact>,
+    errors: Option<Vec<ArtifactError>>,
+    unavailable: Option<ArtifactUnavailable>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotebookSource {
+    source_id: String,
+    title: String,
+    uri: String,
+    sha256: String,
+    retrieved_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotebookProvenance {
+    provider: String,
+    adapter: String,
+    adapter_version: String,
+    invocation_id: String,
+    sources: Vec<NotebookSource>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotebookCitation {
+    source_id: String,
+    locator: String,
+    quote_sha256: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotebookClaim {
+    claim_id: String,
+    statement: String,
+    citations: Vec<NotebookCitation>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotebookBrief {
+    summary: String,
+    constraints: Vec<String>,
+    open_questions: Vec<String>,
+    #[serde(default)]
+    affected_docs: Vec<String>,
+    claims: Vec<NotebookClaim>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotebookArtifact {
+    schema_version: String,
+    artifact_type: String,
+    artifact_id: String,
+    story_id: String,
+    status: ContextIngestStatus,
+    generated_at: String,
+    provenance: NotebookProvenance,
+    brief: Option<NotebookBrief>,
+    errors: Option<Vec<ArtifactError>>,
+    unavailable: Option<ArtifactUnavailable>,
+}
+
+fn validate_context_artifact(
+    source: ContextSource,
+    story_id: &str,
+    bytes: &[u8],
+    artifact_sha256: &str,
+) -> ContextArtifactValidation {
+    match source {
+        ContextSource::Codegraph => {
+            let artifact = serde_json::from_slice::<CodeGraphArtifact>(bytes);
+            match artifact {
+                Ok(artifact) => validate_codegraph_artifact(artifact, story_id),
+                Err(error) => invalid_artifact_validation(
+                    artifact_sha256,
+                    format!("CodeGraph artifact does not match schema v1.0.0: {error}"),
+                ),
+            }
+        }
+        ContextSource::Notebooklm => {
+            let artifact = serde_json::from_slice::<NotebookArtifact>(bytes);
+            match artifact {
+                Ok(artifact) => validate_notebook_artifact(artifact, story_id),
+                Err(error) => invalid_artifact_validation(
+                    artifact_sha256,
+                    format!("NotebookLM artifact does not match schema v1.0.0: {error}"),
+                ),
+            }
+        }
+    }
+}
+
+fn invalid_artifact_validation(hash: &str, message: String) -> ContextArtifactValidation {
+    ContextArtifactValidation {
+        artifact_id: uuid_from_sha256(hash),
+        schema_version: "unknown".to_owned(),
+        status: ContextIngestStatus::Fail,
+        provenance_status: ContextIngestStatus::Fail,
+        summary: None,
+        mapped_context: None,
+        diagnostics: vec![ContextIngestDiagnostic {
+            code: "INVALID_ARTIFACT".to_owned(),
+            message,
+            path: None,
+            retryable: Some(false),
+        }],
+    }
+}
+
+fn validate_codegraph_artifact(
+    artifact: CodeGraphArtifact,
+    expected_story: &str,
+) -> ContextArtifactValidation {
+    let mut diagnostics = validate_common_artifact(
+        &artifact.schema_version,
+        &artifact.artifact_type,
+        "codegraph-impact",
+        &artifact.artifact_id,
+        &artifact.story_id,
+        expected_story,
+        &artifact.generated_at,
+    );
+    validate_codegraph_provenance(&artifact.provenance, artifact.status, &mut diagnostics);
+
+    let (summary, mapped_context) = match artifact.status {
+        ContextIngestStatus::Pass => match artifact.impact {
+            Some(impact) => {
+                validate_codegraph_impact(&impact, &mut diagnostics);
+                let summary = impact.summary.clone();
+                let mapped = MappedContext {
+                    risk_flags: impact.risk_flags.clone(),
+                    affected_files: impact
+                        .affected_files
+                        .iter()
+                        .map(|file| file.path.clone())
+                        .collect(),
+                    affected_docs: Vec::new(),
+                    code_impact_summary: Some(summary.clone()),
+                    grounded_context: None,
+                    claim_ids: impact
+                        .claims
+                        .iter()
+                        .map(|claim| claim.claim_id.clone())
+                        .collect(),
+                };
+                (Some(summary), Some(mapped))
+            }
+            None => {
+                diagnostics.push(diagnostic(
+                    "MISSING_IMPACT",
+                    "passing CodeGraph artifact requires impact",
+                ));
+                (None, None)
+            }
+        },
+        ContextIngestStatus::Fail => {
+            validate_declared_failure(artifact.errors.as_deref(), &mut diagnostics);
+            if artifact.impact.is_some() || artifact.unavailable.is_some() {
+                diagnostics.push(diagnostic(
+                    "INVALID_FAILURE_SHAPE",
+                    "failed CodeGraph artifact must contain errors only",
+                ));
+            }
+            (None, None)
+        }
+        ContextIngestStatus::Inconclusive => {
+            validate_unavailable(
+                artifact.unavailable.as_ref(),
+                &[
+                    "provider_unavailable",
+                    "permission_denied",
+                    "timeout",
+                    "repository_unavailable",
+                    "insufficient_evidence",
+                ],
+                &mut diagnostics,
+            );
+            if artifact.impact.is_some() || artifact.errors.is_some() {
+                diagnostics.push(diagnostic(
+                    "INVALID_INCONCLUSIVE_SHAPE",
+                    "inconclusive CodeGraph artifact must contain unavailable only",
+                ));
+            }
+            (None, None)
+        }
+    };
+    finalize_artifact_validation(
+        artifact.artifact_id,
+        artifact.schema_version,
+        artifact.status,
+        summary,
+        mapped_context,
+        diagnostics,
+    )
+}
+
+fn validate_notebook_artifact(
+    artifact: NotebookArtifact,
+    expected_story: &str,
+) -> ContextArtifactValidation {
+    let mut diagnostics = validate_common_artifact(
+        &artifact.schema_version,
+        &artifact.artifact_type,
+        "notebooklm-brief",
+        &artifact.artifact_id,
+        &artifact.story_id,
+        expected_story,
+        &artifact.generated_at,
+    );
+    validate_notebook_provenance(&artifact.provenance, artifact.status, &mut diagnostics);
+
+    let (summary, mapped_context) = match artifact.status {
+        ContextIngestStatus::Pass => match artifact.brief {
+            Some(brief) => {
+                validate_notebook_brief(&brief, &artifact.provenance, &mut diagnostics);
+                let summary = brief.summary.clone();
+                let grounded_context = render_grounded_context(&brief);
+                let mapped = MappedContext {
+                    risk_flags: Vec::new(),
+                    affected_files: Vec::new(),
+                    affected_docs: brief.affected_docs.clone(),
+                    code_impact_summary: None,
+                    grounded_context: Some(grounded_context),
+                    claim_ids: brief
+                        .claims
+                        .iter()
+                        .map(|claim| claim.claim_id.clone())
+                        .collect(),
+                };
+                (Some(summary), Some(mapped))
+            }
+            None => {
+                diagnostics.push(diagnostic(
+                    "MISSING_BRIEF",
+                    "passing NotebookLM artifact requires brief",
+                ));
+                (None, None)
+            }
+        },
+        ContextIngestStatus::Fail => {
+            validate_declared_failure(artifact.errors.as_deref(), &mut diagnostics);
+            if artifact.brief.is_some() || artifact.unavailable.is_some() {
+                diagnostics.push(diagnostic(
+                    "INVALID_FAILURE_SHAPE",
+                    "failed NotebookLM artifact must contain errors only",
+                ));
+            }
+            (None, None)
+        }
+        ContextIngestStatus::Inconclusive => {
+            validate_unavailable(
+                artifact.unavailable.as_ref(),
+                &[
+                    "provider_unavailable",
+                    "permission_denied",
+                    "timeout",
+                    "source_unavailable",
+                    "insufficient_evidence",
+                ],
+                &mut diagnostics,
+            );
+            if artifact.brief.is_some() || artifact.errors.is_some() {
+                diagnostics.push(diagnostic(
+                    "INVALID_INCONCLUSIVE_SHAPE",
+                    "inconclusive NotebookLM artifact must contain unavailable only",
+                ));
+            }
+            (None, None)
+        }
+    };
+    finalize_artifact_validation(
+        artifact.artifact_id,
+        artifact.schema_version,
+        artifact.status,
+        summary,
+        mapped_context,
+        diagnostics,
+    )
+}
+
+fn validate_common_artifact(
+    schema_version: &str,
+    artifact_type: &str,
+    expected_type: &str,
+    artifact_id: &str,
+    story_id: &str,
+    expected_story: &str,
+    generated_at: &str,
+) -> Vec<ContextIngestDiagnostic> {
+    let mut diagnostics = Vec::new();
+    if schema_version != "1.0.0" {
+        diagnostics.push(diagnostic(
+            "UNSUPPORTED_SCHEMA_VERSION",
+            "schema_version must be 1.0.0",
+        ));
+    }
+    if artifact_type != expected_type {
+        diagnostics.push(diagnostic(
+            "ARTIFACT_TYPE_MISMATCH",
+            &format!("artifact_type must be {expected_type}"),
+        ));
+    }
+    if !is_uuid(artifact_id) {
+        diagnostics.push(diagnostic(
+            "INVALID_ARTIFACT_ID",
+            "artifact_id must be a UUID",
+        ));
+    }
+    if story_id != expected_story {
+        diagnostics.push(diagnostic(
+            "STORY_MISMATCH",
+            &format!("artifact story '{story_id}' does not match '{expected_story}'"),
+        ));
+    }
+    if !looks_like_rfc3339(generated_at) {
+        diagnostics.push(diagnostic(
+            "INVALID_GENERATED_AT",
+            "generated_at must be an RFC3339 UTC timestamp",
+        ));
+    }
+    diagnostics
+}
+
+fn validate_codegraph_provenance(
+    provenance: &CodeGraphProvenance,
+    status: ContextIngestStatus,
+    diagnostics: &mut Vec<ContextIngestDiagnostic>,
+) {
+    for (field, value) in [
+        ("provider", provenance.provider.as_str()),
+        ("adapter", provenance.adapter.as_str()),
+        ("adapter_version", provenance.adapter_version.as_str()),
+        ("invocation_id", provenance.invocation_id.as_str()),
+        ("repository", provenance.repository.as_str()),
+        ("revision", provenance.revision.as_str()),
+    ] {
+        require_nonempty(field, value, diagnostics);
+    }
+    if status == ContextIngestStatus::Pass && provenance.inputs.is_empty() {
+        diagnostics.push(diagnostic(
+            "MISSING_PROVENANCE_INPUT",
+            "passing CodeGraph artifact requires at least one hashed input",
+        ));
+    }
+    for input in &provenance.inputs {
+        require_nonempty("provenance.inputs.uri", &input.uri, diagnostics);
+        validate_sha256("provenance.inputs.sha256", &input.sha256, diagnostics);
+    }
+}
+
+fn validate_notebook_provenance(
+    provenance: &NotebookProvenance,
+    status: ContextIngestStatus,
+    diagnostics: &mut Vec<ContextIngestDiagnostic>,
+) {
+    for (field, value) in [
+        ("provider", provenance.provider.as_str()),
+        ("adapter", provenance.adapter.as_str()),
+        ("adapter_version", provenance.adapter_version.as_str()),
+        ("invocation_id", provenance.invocation_id.as_str()),
+    ] {
+        require_nonempty(field, value, diagnostics);
+    }
+    if status == ContextIngestStatus::Pass && provenance.sources.is_empty() {
+        diagnostics.push(diagnostic(
+            "MISSING_PROVENANCE_SOURCE",
+            "passing NotebookLM artifact requires at least one hashed source",
+        ));
+    }
+    for source in &provenance.sources {
+        require_nonempty(
+            "provenance.sources.source_id",
+            &source.source_id,
+            diagnostics,
+        );
+        require_nonempty("provenance.sources.title", &source.title, diagnostics);
+        require_nonempty("provenance.sources.uri", &source.uri, diagnostics);
+        validate_sha256("provenance.sources.sha256", &source.sha256, diagnostics);
+        if !looks_like_rfc3339(&source.retrieved_at) {
+            diagnostics.push(diagnostic(
+                "INVALID_RETRIEVED_AT",
+                "source retrieved_at must be an RFC3339 UTC timestamp",
+            ));
+        }
+    }
+}
+
+fn validate_codegraph_impact(
+    impact: &CodeGraphImpact,
+    diagnostics: &mut Vec<ContextIngestDiagnostic>,
+) {
+    require_nonempty("impact.summary", &impact.summary, diagnostics);
+    let allowed_flags = [
+        "auth",
+        "authorization",
+        "data_model",
+        "audit_security",
+        "external_systems",
+        "public_contracts",
+        "cross_platform",
+        "existing_behavior",
+        "weak_proof",
+        "multi_domain",
+    ];
+    for flag in &impact.risk_flags {
+        if !allowed_flags.contains(&flag.as_str()) {
+            diagnostics.push(diagnostic(
+                "INVALID_RISK_FLAG",
+                &format!("unsupported risk flag '{flag}'"),
+            ));
+        }
+    }
+    if impact.claims.is_empty() {
+        diagnostics.push(diagnostic(
+            "MISSING_CLAIMS",
+            "passing CodeGraph artifact requires claims",
+        ));
+    }
+    for file in &impact.affected_files {
+        require_nonempty("impact.affected_files.path", &file.path, diagnostics);
+        if ![
+            "direct",
+            "transitive",
+            "test",
+            "configuration",
+            "documentation",
+        ]
+        .contains(&file.change_kind.as_str())
+        {
+            diagnostics.push(diagnostic(
+                "INVALID_CHANGE_KIND",
+                &format!("unsupported change_kind '{}'", file.change_kind),
+            ));
+        }
+        if file.reasons.is_empty() || file.reasons.iter().any(|value| value.trim().is_empty()) {
+            diagnostics.push(diagnostic(
+                "MISSING_FILE_REASON",
+                "each affected file requires at least one reason",
+            ));
+        }
+        if file.symbols.iter().any(|value| value.trim().is_empty()) {
+            diagnostics.push(diagnostic(
+                "INVALID_SYMBOL",
+                "affected file symbols must not be empty",
+            ));
+        }
+    }
+    for edge in &impact.dependency_edges {
+        require_nonempty("impact.dependency_edges.from", &edge.from, diagnostics);
+        require_nonempty("impact.dependency_edges.to", &edge.to, diagnostics);
+        if ![
+            "imports",
+            "calls",
+            "implements",
+            "reads",
+            "writes",
+            "configures",
+            "tests",
+        ]
+        .contains(&edge.kind.as_str())
+        {
+            diagnostics.push(diagnostic(
+                "INVALID_DEPENDENCY_KIND",
+                &format!("unsupported dependency edge kind '{}'", edge.kind),
+            ));
+        }
+    }
+    for claim in &impact.claims {
+        validate_claim(
+            &claim.claim_id,
+            "CG-",
+            &claim.statement,
+            &claim.evidence_refs,
+            diagnostics,
+        );
+    }
+}
+
+fn validate_notebook_brief(
+    brief: &NotebookBrief,
+    provenance: &NotebookProvenance,
+    diagnostics: &mut Vec<ContextIngestDiagnostic>,
+) {
+    require_nonempty("brief.summary", &brief.summary, diagnostics);
+    if brief.claims.is_empty() {
+        diagnostics.push(diagnostic(
+            "MISSING_CLAIMS",
+            "passing NotebookLM artifact requires grounded claims",
+        ));
+    }
+    let source_ids = provenance
+        .sources
+        .iter()
+        .map(|source| source.source_id.as_str())
+        .collect::<Vec<_>>();
+    for claim in &brief.claims {
+        let suffix = claim.claim_id.strip_prefix("NL-").unwrap_or_default();
+        if suffix.is_empty() || suffix.chars().any(|value| !value.is_ascii_digit()) {
+            diagnostics.push(diagnostic(
+                "INVALID_CLAIM_ID",
+                &format!("invalid NotebookLM claim id '{}'", claim.claim_id),
+            ));
+        }
+        require_nonempty("brief.claims.statement", &claim.statement, diagnostics);
+        if claim.citations.is_empty() {
+            diagnostics.push(diagnostic(
+                "MISSING_CITATION",
+                &format!("claim '{}' requires at least one citation", claim.claim_id),
+            ));
+        }
+        for citation in &claim.citations {
+            if !source_ids.contains(&citation.source_id.as_str()) {
+                diagnostics.push(diagnostic(
+                    "UNKNOWN_CITATION_SOURCE",
+                    &format!(
+                        "citation source '{}' is not in provenance",
+                        citation.source_id
+                    ),
+                ));
+            }
+            require_nonempty(
+                "brief.claims.citations.locator",
+                &citation.locator,
+                diagnostics,
+            );
+            if let Some(hash) = &citation.quote_sha256 {
+                validate_sha256("brief.claims.citations.quote_sha256", hash, diagnostics);
+            }
+        }
+    }
+}
+
+fn validate_claim(
+    claim_id: &str,
+    prefix: &str,
+    statement: &str,
+    evidence_refs: &[String],
+    diagnostics: &mut Vec<ContextIngestDiagnostic>,
+) {
+    let suffix = claim_id.strip_prefix(prefix).unwrap_or_default();
+    if suffix.is_empty() || suffix.chars().any(|value| !value.is_ascii_digit()) {
+        diagnostics.push(diagnostic(
+            "INVALID_CLAIM_ID",
+            &format!("invalid claim id '{claim_id}'"),
+        ));
+    }
+    require_nonempty("claim.statement", statement, diagnostics);
+    if evidence_refs.is_empty() || evidence_refs.iter().any(|value| value.trim().is_empty()) {
+        diagnostics.push(diagnostic(
+            "MISSING_CLAIM_EVIDENCE",
+            &format!("claim '{claim_id}' requires evidence references"),
+        ));
+    }
+}
+
+fn validate_declared_failure(
+    errors: Option<&[ArtifactError]>,
+    diagnostics: &mut Vec<ContextIngestDiagnostic>,
+) {
+    let Some(errors) = errors.filter(|values| !values.is_empty()) else {
+        diagnostics.push(diagnostic(
+            "MISSING_ERRORS",
+            "failed artifact requires at least one error",
+        ));
+        return;
+    };
+    for error in errors {
+        require_nonempty("errors.code", &error.code, diagnostics);
+        require_nonempty("errors.message", &error.message, diagnostics);
+        let _ = error.retryable;
+    }
+}
+
+fn validate_unavailable(
+    unavailable: Option<&ArtifactUnavailable>,
+    allowed_reasons: &[&str],
+    diagnostics: &mut Vec<ContextIngestDiagnostic>,
+) {
+    let Some(unavailable) = unavailable else {
+        diagnostics.push(diagnostic(
+            "MISSING_UNAVAILABLE",
+            "inconclusive artifact requires unavailable details",
+        ));
+        return;
+    };
+    if !allowed_reasons.contains(&unavailable.reason.as_str()) {
+        diagnostics.push(diagnostic(
+            "INVALID_UNAVAILABLE_REASON",
+            &format!("unsupported unavailable reason '{}'", unavailable.reason),
+        ));
+    }
+    let _ = unavailable.retryable;
+    if unavailable
+        .detail
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        diagnostics.push(diagnostic(
+            "INVALID_UNAVAILABLE_DETAIL",
+            "unavailable detail must not be empty",
+        ));
+    }
+}
+
+fn finalize_artifact_validation(
+    artifact_id: String,
+    schema_version: String,
+    declared_status: ContextIngestStatus,
+    summary: Option<String>,
+    mapped_context: Option<MappedContext>,
+    diagnostics: Vec<ContextIngestDiagnostic>,
+) -> ContextArtifactValidation {
+    let contract_valid = diagnostics.is_empty();
+    let status = if contract_valid {
+        declared_status
+    } else {
+        ContextIngestStatus::Fail
+    };
+    ContextArtifactValidation {
+        artifact_id,
+        schema_version,
+        status,
+        provenance_status: if contract_valid {
+            ContextIngestStatus::Pass
+        } else {
+            ContextIngestStatus::Fail
+        },
+        summary,
+        mapped_context: if status == ContextIngestStatus::Pass {
+            mapped_context
+        } else {
+            None
+        },
+        diagnostics: if contract_valid && status == ContextIngestStatus::Pass {
+            Vec::new()
+        } else if diagnostics.is_empty() {
+            vec![ContextIngestDiagnostic {
+                code: match status {
+                    ContextIngestStatus::Fail => "PROVIDER_REPORTED_FAILURE",
+                    ContextIngestStatus::Inconclusive => "SOURCE_INCONCLUSIVE",
+                    ContextIngestStatus::Pass => unreachable!(),
+                }
+                .to_owned(),
+                message: match status {
+                    ContextIngestStatus::Fail => {
+                        "provider artifact reported a deterministic failure".to_owned()
+                    }
+                    ContextIngestStatus::Inconclusive => {
+                        "provider artifact reported unavailable or insufficient evidence".to_owned()
+                    }
+                    ContextIngestStatus::Pass => unreachable!(),
+                },
+                path: None,
+                retryable: None,
+            }]
+        } else {
+            diagnostics
+        },
+    }
+}
+
+fn render_grounded_context(brief: &NotebookBrief) -> String {
+    let mut lines = vec![brief.summary.clone()];
+    if !brief.constraints.is_empty() {
+        lines.push(format!("Constraints: {}", brief.constraints.join("; ")));
+    }
+    if !brief.open_questions.is_empty() {
+        lines.push(format!(
+            "Open questions: {}",
+            brief.open_questions.join("; ")
+        ));
+    }
+    for claim in &brief.claims {
+        let citations = claim
+            .citations
+            .iter()
+            .map(|citation| format!("{}:{}", citation.source_id, citation.locator))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "{}: {} [{}]",
+            claim.claim_id, claim.statement, citations
+        ));
+    }
+    lines.join("\n")
+}
+
+fn update_intake_from_mapped_context(
+    connection: &Connection,
+    story_id: &str,
+    mapped: &MappedContext,
+) -> Result<()> {
+    let intake = connection
+        .query_row(
+            "SELECT id, risk_flags, affected_docs
+             FROM intake WHERE story_id=?1 ORDER BY id DESC LIMIT 1;",
+            params![story_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            HarnessInfraError::InvalidContextIngest(format!(
+                "story '{story_id}' has no linked intake to update"
+            ))
+        })?;
+    let risk_flags = merge_json_string_array(intake.1.as_deref(), &mapped.risk_flags)?;
+    let affected_docs = merge_json_string_array(intake.2.as_deref(), &mapped.affected_docs)?;
+    connection.execute(
+        "UPDATE intake SET
+            risk_flags=?1,
+            affected_docs=?2,
+            code_impact_summary=COALESCE(?3, code_impact_summary),
+            grounded_context=COALESCE(?4, grounded_context)
+         WHERE id=?5;",
+        params![
+            risk_flags,
+            affected_docs,
+            mapped.code_impact_summary,
+            mapped.grounded_context,
+            intake.0,
+        ],
+    )?;
+    Ok(())
+}
+
+fn merge_json_string_array(existing: Option<&str>, additions: &[String]) -> Result<Option<String>> {
+    let mut values = match existing.filter(|value| !value.trim().is_empty()) {
+        Some(value) => serde_json::from_str::<Vec<String>>(value).map_err(|error| {
+            HarnessInfraError::InvalidContextIngest(format!(
+                "stored JSON array is invalid: {error}"
+            ))
+        })?,
+        None => Vec::new(),
+    };
+    for addition in additions {
+        if !values.contains(addition) {
+            values.push(addition.clone());
+        }
+    }
+    if values.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(serde_json::to_string(&values).map_err(|error| {
+            HarnessInfraError::InvalidContextIngest(error.to_string())
+        })?))
+    }
+}
+
+fn write_context_ingest_report(path: &Path, report: &ContextIngestReport) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(report)
+        .map_err(|error| HarnessInfraError::InvalidContextIngest(error.to_string()))?;
+    fs::write(path, format!("{json}\n"))?;
+    Ok(())
+}
+
+fn diagnostic(code: &str, message: &str) -> ContextIngestDiagnostic {
+    ContextIngestDiagnostic {
+        code: code.to_owned(),
+        message: message.to_owned(),
+        path: None,
+        retryable: Some(false),
+    }
+}
+
+fn require_nonempty(field: &str, value: &str, diagnostics: &mut Vec<ContextIngestDiagnostic>) {
+    if value.trim().is_empty() {
+        diagnostics.push(diagnostic(
+            "MISSING_REQUIRED_VALUE",
+            &format!("{field} must not be empty"),
+        ));
+    }
+}
+
+fn validate_sha256(field: &str, value: &str, diagnostics: &mut Vec<ContextIngestDiagnostic>) {
+    if value.len() != 64
+        || !value
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+    {
+        diagnostics.push(diagnostic(
+            "INVALID_SHA256",
+            &format!("{field} must be a lowercase SHA256 digest"),
+        ));
+    }
+}
+
+fn is_uuid(value: &str) -> bool {
+    let parts = value.split('-').collect::<Vec<_>>();
+    [8, 4, 4, 4, 12]
+        .into_iter()
+        .zip(parts)
+        .all(|(length, part)| {
+            part.len() == length && part.chars().all(|character| character.is_ascii_hexdigit())
+        })
+}
+
+fn looks_like_rfc3339(value: &str) -> bool {
+    value.len() >= 20
+        && value.as_bytes().get(4) == Some(&b'-')
+        && value.as_bytes().get(7) == Some(&b'-')
+        && value.as_bytes().get(10) == Some(&b'T')
+        && (value.ends_with('Z')
+            || value
+                .get(19..)
+                .is_some_and(|suffix| suffix.contains('+') || suffix.contains('-')))
+}
+
+fn uuid_from_sha256(value: &str) -> String {
+    let digest = format!("{:x}", Sha256::digest(value.as_bytes()));
+    format!(
+        "{}-{}-4{}-8{}-{}",
+        &digest[0..8],
+        &digest[8..12],
+        &digest[13..16],
+        &digest[17..20],
+        &digest[20..32]
+    )
+}
+
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
     assets: Vec<GithubAsset>,
@@ -2143,10 +3251,14 @@ mod tests {
 
     use super::*;
     use crate::application::{
-        BacklogAddInput, BacklogCloseInput, DecisionAddInput, IntakeInput, ReleaseVerifyInput,
-        StoryAddInput, StoryUpdateInput, TraceInput,
+        BacklogAddInput, BacklogCloseInput, ContextIngestInput, DecisionAddInput, HarnessContext,
+        HarnessService, IntakeInput, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput,
+        TraceInput,
     };
-    use crate::domain::{BacklogFilter, BoolFlag, CsvList, InputType, RiskLane, TraceQualityTier};
+    use crate::domain::{
+        BacklogFilter, BoolFlag, ContextIngestStatus, ContextSource, CsvList, InputType, RiskLane,
+        TraceQualityTier,
+    };
 
     fn test_repository() -> (TempDir, SqliteHarnessRepository) {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -2171,6 +3283,119 @@ mod tests {
         rows.collect::<std::result::Result<Vec<_>, _>>().unwrap()
     }
 
+    fn context_test_repository() -> (TempDir, PathBuf, SqliteHarnessRepository) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_root = temp_dir.path().join("repo");
+        fs::create_dir_all(&repo_root).unwrap();
+        let schema_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap()
+            .join("scripts/schema");
+        let repository = SqliteHarnessRepository::new(
+            repo_root.clone(),
+            temp_dir.path().join("harness.db"),
+            schema_root,
+        );
+        (temp_dir, repo_root, repository)
+    }
+
+    fn passing_codegraph_artifact(story_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": "1.0.0",
+            "artifact_type": "codegraph-impact",
+            "artifact_id": "11111111-1111-4111-8111-111111111111",
+            "story_id": story_id,
+            "status": "pass",
+            "generated_at": "2026-06-07T00:00:00Z",
+            "provenance": {
+                "provider": "codegraph",
+                "adapter": "test-adapter",
+                "adapter_version": "0.1.0",
+                "invocation_id": "run-1",
+                "repository": "example/repo",
+                "revision": "abc123",
+                "inputs": [{
+                    "uri": "git:HEAD",
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }]
+            },
+            "impact": {
+                "summary": "Context ingest changes the CLI trust boundary.",
+                "affected_files": [{
+                    "path": "crates/harness-cli/src/infrastructure.rs",
+                    "change_kind": "direct",
+                    "reasons": ["Ingest persistence is implemented here."],
+                    "symbols": ["ingest_context"]
+                }],
+                "dependency_edges": [],
+                "risk_flags": ["external_systems", "public_contracts"],
+                "claims": [{
+                    "claim_id": "CG-1",
+                    "statement": "The infrastructure layer persists ingest summaries.",
+                    "evidence_refs": ["crates/harness-cli/src/infrastructure.rs"]
+                }]
+            }
+        })
+    }
+
+    fn inconclusive_notebook_artifact(story_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": "1.0.0",
+            "artifact_type": "notebooklm-brief",
+            "artifact_id": "22222222-2222-4222-8222-222222222222",
+            "story_id": story_id,
+            "status": "inconclusive",
+            "generated_at": "2026-06-07T00:00:00Z",
+            "provenance": {
+                "provider": "notebooklm",
+                "adapter": "test-adapter",
+                "adapter_version": "0.1.0",
+                "invocation_id": "run-2",
+                "sources": []
+            },
+            "unavailable": {
+                "reason": "provider_unavailable",
+                "retryable": true
+            }
+        })
+    }
+
+    fn add_context_story_and_intake(
+        repository: &SqliteHarnessRepository,
+        story_id: &str,
+        codegraph_required: i64,
+        notebooklm_required: i64,
+    ) {
+        repository
+            .add_story(StoryAddInput {
+                id: story_id.to_owned(),
+                title: "Context ingest story".to_owned(),
+                risk_lane: RiskLane::HighRisk,
+                contract_doc: None,
+                verify_command: Some("echo ok".to_owned()),
+                notes: None,
+                release_proof_required: BoolFlag(0),
+                codegraph_ingest_required: BoolFlag(codegraph_required),
+                notebooklm_ingest_required: BoolFlag(notebooklm_required),
+            })
+            .unwrap();
+        repository
+            .record_intake(IntakeInput {
+                input_type: InputType::HarnessImprovement,
+                summary: "Validate external context artifacts".to_owned(),
+                risk_lane: RiskLane::HighRisk,
+                risk_flags: CsvList::from_optional(None),
+                affected_docs: CsvList::from_optional(None),
+                story_id: Some(story_id.to_owned()),
+                notes: None,
+                code_impact_summary: None,
+                grounded_context: None,
+                auto_generated: false,
+            })
+            .unwrap();
+    }
+
     #[test]
     fn init_creates_database_and_schema() {
         let (_temp_dir, repository) = test_repository();
@@ -2181,7 +3406,7 @@ mod tests {
         assert_eq!(repository.query_stats().unwrap().intakes, 0);
         let connection = repository.open_existing().unwrap();
         let schema_version = SqliteHarnessRepository::schema_version(&connection).unwrap();
-        assert_eq!(schema_version, 5);
+        assert_eq!(schema_version, 6);
         let story_columns = story_columns(&connection);
         assert!(story_columns.contains(&"verify_command".to_owned()));
         assert!(story_columns.contains(&"last_verified_at".to_owned()));
@@ -2189,6 +3414,8 @@ mod tests {
         assert!(story_columns.contains(&"arch_check_result".to_owned()));
         assert!(story_columns.contains(&"gate_result".to_owned()));
         assert!(story_columns.contains(&"release_proof_required".to_owned()));
+        assert!(story_columns.contains(&"codegraph_ingest_required".to_owned()));
+        assert!(story_columns.contains(&"notebooklm_ingest_required".to_owned()));
         let release_table_exists = connection
             .query_row(
                 "SELECT EXISTS(
@@ -2200,6 +3427,17 @@ mod tests {
             )
             .unwrap();
         assert_eq!(release_table_exists, 1);
+        let ingest_table_exists = connection
+            .query_row(
+                "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type='table' AND name='context_ingest'
+             );",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(ingest_table_exists, 1);
     }
 
     #[test]
@@ -2212,11 +3450,11 @@ mod tests {
         let result = repository.migrate().unwrap();
 
         assert_eq!(result.current_version, 1);
-        assert_eq!(result.applied, vec![2, 3, 4, 5]);
+        assert_eq!(result.applied, vec![2, 3, 4, 5, 6]);
         let connection = repository.open_existing().unwrap();
         assert_eq!(
             SqliteHarnessRepository::schema_version(&connection).unwrap(),
-            5
+            6
         );
         let story_columns = story_columns(&connection);
         assert!(story_columns.contains(&"verify_command".to_owned()));
@@ -2225,6 +3463,179 @@ mod tests {
         assert!(story_columns.contains(&"context_pack_path".to_owned()));
         assert!(story_columns.contains(&"gate_result".to_owned()));
         assert!(story_columns.contains(&"release_proof_required".to_owned()));
+        assert!(story_columns.contains(&"codegraph_ingest_required".to_owned()));
+        assert!(story_columns.contains(&"notebooklm_ingest_required".to_owned()));
+    }
+
+    #[test]
+    fn context_ingest_pass_updates_intake_context_pack_and_governance_gate() {
+        let (_temp_dir, repo_root, repository) = context_test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-CONTEXT", 1, 0);
+
+        let gate_before = repository.verify_story_gate("US-CONTEXT").unwrap();
+        assert!(gate_before
+            .missing
+            .contains(&"CodeGraph context ingest proof".to_owned()));
+
+        let artifact_path = repo_root.join("codegraph-impact.json");
+        fs::write(
+            &artifact_path,
+            serde_json::to_vec_pretty(&passing_codegraph_artifact("US-CONTEXT")).unwrap(),
+        )
+        .unwrap();
+        let (report_path, report) = repository
+            .ingest_context(ContextIngestInput {
+                story_id: "US-CONTEXT".to_owned(),
+                source: ContextSource::Codegraph,
+                file: artifact_path,
+                output: None,
+            })
+            .unwrap();
+
+        assert_eq!(report.status, ContextIngestStatus::Pass);
+        assert!(report.governance.eligible_for_intake);
+        assert!(report_path.is_file());
+        let stored_report: serde_json::Value =
+            serde_json::from_slice(&fs::read(&report_path).unwrap()).unwrap();
+        assert_eq!(stored_report["status"], "pass");
+
+        let connection = repository.open_existing().unwrap();
+        let stored: (String, String) = connection
+            .query_row(
+                "SELECT result, provenance_status FROM context_ingest
+                 WHERE story_id='US-CONTEXT' AND source='codegraph';",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stored, ("pass".to_owned(), "pass".to_owned()));
+        let intake: (String, String) = connection
+            .query_row(
+                "SELECT risk_flags, code_impact_summary FROM intake
+                 WHERE story_id='US-CONTEXT';",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(intake.0.contains("external_systems"));
+        assert_eq!(intake.1, "Context ingest changes the CLI trust boundary.");
+        drop(connection);
+
+        let service = HarnessService::new(HarnessContext {
+            repo_root: repo_root.clone(),
+            db_path: repository.db_path.clone(),
+            schema_dir: repository.schema_dir.clone(),
+        });
+        let context_pack = service.generate_context_pack("US-CONTEXT").unwrap();
+        let context_markdown = fs::read_to_string(context_pack).unwrap();
+        assert!(context_markdown.contains("Validated Context Ingest Evidence"));
+        assert!(context_markdown.contains("**codegraph:** pass"));
+
+        let gate_after = repository.verify_story_gate("US-CONTEXT").unwrap();
+        assert!(!gate_after
+            .missing
+            .contains(&"CodeGraph context ingest proof".to_owned()));
+    }
+
+    #[test]
+    fn context_ingest_missing_provenance_fails_without_updating_intake() {
+        let (_temp_dir, repo_root, repository) = context_test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-INVALID", 1, 0);
+
+        let mut artifact = passing_codegraph_artifact("US-INVALID");
+        artifact.as_object_mut().unwrap().remove("provenance");
+        let artifact_path = repo_root.join("invalid-codegraph-impact.json");
+        fs::write(
+            &artifact_path,
+            serde_json::to_vec_pretty(&artifact).unwrap(),
+        )
+        .unwrap();
+
+        let (_, report) = repository
+            .ingest_context(ContextIngestInput {
+                story_id: "US-INVALID".to_owned(),
+                source: ContextSource::Codegraph,
+                file: artifact_path,
+                output: None,
+            })
+            .unwrap();
+
+        assert_eq!(report.status, ContextIngestStatus::Fail);
+        assert!(!report.governance.eligible_for_story_verify);
+        assert!(report.mapped_context.is_none());
+        let connection = repository.open_existing().unwrap();
+        let result: String = connection
+            .query_row(
+                "SELECT result FROM context_ingest WHERE story_id='US-INVALID';",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(result, "fail");
+        let mapped: (Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT risk_flags, code_impact_summary FROM intake
+                 WHERE story_id='US-INVALID';",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(mapped, (None, None));
+        let gate = repository.verify_story_gate("US-INVALID").unwrap();
+        assert!(gate
+            .missing
+            .contains(&"CodeGraph context ingest proof".to_owned()));
+    }
+
+    #[test]
+    fn context_ingest_unavailable_source_is_inconclusive_and_not_governance_eligible() {
+        let (_temp_dir, repo_root, repository) = context_test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-UNAVAILABLE", 0, 1);
+
+        let artifact_path = repo_root.join("notebooklm-brief.json");
+        fs::write(
+            &artifact_path,
+            serde_json::to_vec_pretty(&inconclusive_notebook_artifact("US-UNAVAILABLE")).unwrap(),
+        )
+        .unwrap();
+        let (_, report) = repository
+            .ingest_context(ContextIngestInput {
+                story_id: "US-UNAVAILABLE".to_owned(),
+                source: ContextSource::Notebooklm,
+                file: artifact_path,
+                output: None,
+            })
+            .unwrap();
+
+        assert_eq!(report.status, ContextIngestStatus::Inconclusive);
+        assert!(!report.governance.eligible_for_intake);
+        assert!(!report.governance.eligible_for_context_pack);
+        assert!(report.mapped_context.is_none());
+        let connection = repository.open_existing().unwrap();
+        let stored: (String, Option<String>) = connection
+            .query_row(
+                "SELECT result, summary FROM context_ingest
+                 WHERE story_id='US-UNAVAILABLE';",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stored.0, "inconclusive");
+        let grounded_context: Option<String> = connection
+            .query_row(
+                "SELECT grounded_context FROM intake WHERE story_id='US-UNAVAILABLE';",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(grounded_context, None);
+        let gate = repository.verify_story_gate("US-UNAVAILABLE").unwrap();
+        assert!(gate
+            .missing
+            .contains(&"NotebookLM context ingest proof".to_owned()));
     }
 
     #[test]
@@ -2323,6 +3734,8 @@ mod tests {
                 verify_command: Some("echo ok".to_owned()),
                 notes: None,
                 release_proof_required: BoolFlag(0),
+                codegraph_ingest_required: BoolFlag(0),
+                notebooklm_ingest_required: BoolFlag(0),
             })
             .unwrap();
         assert_eq!(
@@ -2345,6 +3758,8 @@ mod tests {
                 platform: None,
                 verify_command: Some("npm test".to_owned()),
                 release_proof_required: None,
+                codegraph_ingest_required: None,
+                notebooklm_ingest_required: None,
             })
             .unwrap();
 
@@ -2391,6 +3806,8 @@ mod tests {
                 verify_command: Some(verify_command),
                 notes: None,
                 release_proof_required: BoolFlag(0),
+                codegraph_ingest_required: BoolFlag(0),
+                notebooklm_ingest_required: BoolFlag(0),
             })
             .unwrap();
         let pass = repository.verify_story("US-PASS").unwrap();
@@ -2417,6 +3834,8 @@ mod tests {
                 verify_command: Some("exit 1".to_owned()),
                 notes: None,
                 release_proof_required: BoolFlag(0),
+                codegraph_ingest_required: BoolFlag(0),
+                notebooklm_ingest_required: BoolFlag(0),
             })
             .unwrap();
         let fail = repository.verify_story("US-FAIL").unwrap();
@@ -2439,6 +3858,8 @@ mod tests {
                 verify_command: None,
                 notes: None,
                 release_proof_required: BoolFlag(0),
+                codegraph_ingest_required: BoolFlag(0),
+                notebooklm_ingest_required: BoolFlag(0),
             })
             .unwrap();
         assert!(matches!(
@@ -2461,6 +3882,8 @@ mod tests {
                 verify_command: None,
                 notes: None,
                 release_proof_required: BoolFlag(0),
+                codegraph_ingest_required: BoolFlag(0),
+                notebooklm_ingest_required: BoolFlag(0),
             })
             .unwrap();
         repository
@@ -2474,6 +3897,8 @@ mod tests {
                 platform: None,
                 verify_command: None,
                 release_proof_required: None,
+                codegraph_ingest_required: None,
+                notebooklm_ingest_required: None,
             })
             .unwrap();
         assert_eq!(repository.query_matrix().unwrap()[0].unit, 1);
@@ -2964,6 +4389,8 @@ forbidden_imports = ["infrastructure"]
                 verify_command: Some("exit 0".to_owned()),
                 notes: None,
                 release_proof_required: BoolFlag(0),
+                codegraph_ingest_required: BoolFlag(0),
+                notebooklm_ingest_required: BoolFlag(0),
             })
             .unwrap();
 
@@ -3014,6 +4441,8 @@ forbidden_imports = ["infrastructure"]
                 platform: None,
                 verify_command: None,
                 release_proof_required: None,
+                codegraph_ingest_required: None,
+                notebooklm_ingest_required: None,
             })
             .unwrap();
         repository
@@ -3049,6 +4478,8 @@ forbidden_imports = ["infrastructure"]
                 platform: None,
                 verify_command: None,
                 release_proof_required: Some(BoolFlag(1)),
+                codegraph_ingest_required: None,
+                notebooklm_ingest_required: None,
             })
             .unwrap();
         let release_missing = repository.verify_story_gate("US-GATE").unwrap();
@@ -3118,6 +4549,8 @@ forbidden_imports = ["infrastructure"]
                 verify_command: None,
                 notes: None,
                 release_proof_required: BoolFlag(1),
+                codegraph_ingest_required: BoolFlag(0),
+                notebooklm_ingest_required: BoolFlag(0),
             })
             .unwrap();
 

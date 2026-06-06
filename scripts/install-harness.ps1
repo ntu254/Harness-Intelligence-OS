@@ -381,6 +381,7 @@ $files = @(
     "scripts/schema/003-hi-os.sql",
     "scripts/schema/004-verification-gate.sql",
     "scripts/schema/005-release-verification.sql",
+    "scripts/schema/006-context-ingest.sql",
     "harness-architecture.toml",
     "harness-release.toml",
     ".gitignore"

@@ -69,18 +69,19 @@ evidence. Risk detection uses normalized path segments, so names such as
 
 ## MCP Artifact Boundary
 
-HI-OS v0.4 defines the future real-provider boundary as versioned JSON files:
+HI-OS v0.4 defines the real-provider boundary as versioned JSON files:
 
 - `docs/schemas/codegraph-impact.schema.json`
 - `docs/schemas/notebooklm-brief.schema.json`
 - `docs/schemas/context-ingest-result.schema.json`
 
-MCP tools do not write directly to Harness SQLite. A future `context ingest`
-command will validate the provider artifact, verify provenance and semantic
-links, map accepted fields, and emit an auditable ingest result. `fail` and
+MCP tools do not write directly to Harness SQLite. `context ingest` validates a
+provider artifact, verifies provenance and semantic links, maps accepted
+fields, and emits an auditable ingest result. The full operational artifact and
+result remain files; SQLite stores the governance summary. `fail` and
 `inconclusive` artifacts never count as successful intake or governance
-evidence. The current `intake --auto` flags remain unchanged until that command
-is implemented.
+evidence. The current `intake --auto` flags remain unchanged; live provider
+adapters and broader governance integration are separate stories.
 
 ## Lanes
 

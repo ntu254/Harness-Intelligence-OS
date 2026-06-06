@@ -10,6 +10,8 @@ pub enum ParseHarnessValueError {
     InputType(String),
     #[error("unknown lane '{0}'. Use: tiny, normal, or high-risk. Use tiny instead of low.")]
     RiskLane(String),
+    #[error("unknown context source '{0}'. Use: codegraph or notebooklm")]
+    ContextSource(String),
     #[error("{0} must be an integer")]
     Integer(String),
     #[error("{0} must be 0 or 1. Example: --unit 1 --integration 1 --e2e 0 --platform 0")]
@@ -466,6 +468,117 @@ pub fn normalize_token(value: &str) -> String {
     }
 
     normalized
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContextSource {
+    Codegraph,
+    Notebooklm,
+}
+
+impl ContextSource {
+    pub fn as_db_value(&self) -> &'static str {
+        match self {
+            Self::Codegraph => "codegraph",
+            Self::Notebooklm => "notebooklm",
+        }
+    }
+
+    pub fn artifact_type(&self) -> &'static str {
+        match self {
+            Self::Codegraph => "codegraph-impact",
+            Self::Notebooklm => "notebooklm-brief",
+        }
+    }
+}
+
+impl FromStr for ContextSource {
+    type Err = ParseHarnessValueError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match normalize_token(value).as_str() {
+            "codegraph" => Ok(Self::Codegraph),
+            "notebooklm" => Ok(Self::Notebooklm),
+            _ => Err(ParseHarnessValueError::ContextSource(value.to_owned())),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContextIngestStatus {
+    Pass,
+    Fail,
+    Inconclusive,
+}
+
+impl ContextIngestStatus {
+    pub fn as_db_value(&self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::Inconclusive => "inconclusive",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ContextSourceArtifact {
+    pub artifact_type: String,
+    pub artifact_id: String,
+    pub schema_version: String,
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct MappedContext {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub risk_flags: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub affected_files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub affected_docs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_impact_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grounded_context: Option<String>,
+    pub claim_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ContextIngestDiagnostic {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ContextIngestGovernance {
+    pub eligible_for_intake: bool,
+    pub eligible_for_context_pack: bool,
+    pub eligible_for_story_verify: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ContextIngestReport {
+    pub schema_version: String,
+    pub artifact_type: String,
+    pub ingest_id: String,
+    pub story_id: String,
+    pub source: ContextSource,
+    pub source_artifact: ContextSourceArtifact,
+    pub status: ContextIngestStatus,
+    pub checked_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mapped_context: Option<MappedContext>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<ContextIngestDiagnostic>,
+    pub governance: ContextIngestGovernance,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]

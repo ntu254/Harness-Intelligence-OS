@@ -6,15 +6,15 @@ use clap::{Args, Parser, Subcommand};
 use thiserror::Error;
 
 use crate::application::{
-    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, DecisionAddInput, HarnessContext,
-    HarnessService, InitResult, IntakeInput, MigrateResult, QueryTable, ReleaseVerifyInput,
-    StoryAddInput, StoryUpdateInput, TraceInput,
+    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, ContextIngestInput,
+    DecisionAddInput, HarnessContext, HarnessService, InitResult, IntakeInput, MigrateResult,
+    QueryTable, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, TraceInput,
 };
 use crate::domain::{
     parse_optional_integer, path_has_any_segment, proof_display, BacklogFilter, BacklogRecord,
-    BoolFlag, CsvList, DecisionRecord, FrictionRecord, HarnessStats, InputType, IntakeRecord,
-    ReleaseCheckResult, RiskLane, StoryMatrixRecord, TraceQualityTier, TraceRecord,
-    TraceScoreResult, RISK_LANE_HELP,
+    BoolFlag, ContextIngestStatus, ContextSource, CsvList, DecisionRecord, FrictionRecord,
+    HarnessStats, InputType, IntakeRecord, ReleaseCheckResult, RiskLane, StoryMatrixRecord,
+    TraceQualityTier, TraceRecord, TraceScoreResult, RISK_LANE_HELP,
 };
 
 #[derive(Parser, Debug)]
@@ -132,6 +132,10 @@ struct StoryAddArgs {
     notes: Option<String>,
     #[arg(long = "release-proof", value_name = "0|1", default_value = "0")]
     release_proof: String,
+    #[arg(long = "codegraph-ingest", value_name = "0|1", default_value = "0")]
+    codegraph_ingest: String,
+    #[arg(long = "notebooklm-ingest", value_name = "0|1", default_value = "0")]
+    notebooklm_ingest: String,
 }
 
 #[derive(Args, Debug)]
@@ -154,6 +158,10 @@ struct StoryUpdateArgs {
     verify: Option<String>,
     #[arg(long = "release-proof", value_name = "0|1")]
     release_proof: Option<String>,
+    #[arg(long = "codegraph-ingest", value_name = "0|1")]
+    codegraph_ingest: Option<String>,
+    #[arg(long = "notebooklm-ingest", value_name = "0|1")]
+    notebooklm_ingest: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -299,10 +307,31 @@ struct QueryArgs {
 }
 
 #[derive(Args, Debug)]
+#[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
 struct ContextArgs {
+    #[command(subcommand)]
+    action: Option<ContextAction>,
     /// Story ID to generate context pack for (e.g. US-001).
+    #[arg(long, required = true)]
+    story: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum ContextAction {
+    /// Validate and ingest a versioned external intelligence artifact.
+    Ingest(ContextIngestArgs),
+}
+
+#[derive(Args, Debug)]
+struct ContextIngestArgs {
     #[arg(long)]
     story: String,
+    #[arg(long, value_name = "codegraph|notebooklm")]
+    source: String,
+    #[arg(long)]
+    file: PathBuf,
+    #[arg(long)]
+    output: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -551,8 +580,34 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
             println!("Intake #{id} recorded.");
         }
         Command::Context(args) => {
-            let path = service.generate_context_pack(&args.story)?;
-            println!("Context pack generated successfully at {}", path.display());
+            if let Some(action) = args.action {
+                match action {
+                    ContextAction::Ingest(args) => {
+                        let (path, report) = service.ingest_context(ContextIngestInput {
+                            story_id: args.story,
+                            source: ContextSource::from_str(&args.source)?,
+                            file: args.file,
+                            output: args.output,
+                        })?;
+                        println!("Context source: {}", report.source.as_db_value());
+                        println!("Artifact SHA256: {}", report.source_artifact.sha256);
+                        for diagnostic in &report.diagnostics {
+                            println!("Diagnostic {}: {}", diagnostic.code, diagnostic.message);
+                        }
+                        println!("Evidence: {}", path.display());
+                        println!("Context ingest: {}", report.status.as_db_value());
+                        if report.status != ContextIngestStatus::Pass {
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            } else {
+                let story = args
+                    .story
+                    .expect("clap requires --story without a subcommand");
+                let path = service.generate_context_pack(&story)?;
+                println!("Context pack generated successfully at {}", path.display());
+            }
         }
         Command::ArchCheck(args) => {
             let result = service.check_architecture(args.config, args.story.as_deref())?;
@@ -608,6 +663,14 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                         "story add: --release-proof",
                         &args.release_proof,
                     )?,
+                    codegraph_ingest_required: BoolFlag::parse(
+                        "story add: --codegraph-ingest",
+                        &args.codegraph_ingest,
+                    )?,
+                    notebooklm_ingest_required: BoolFlag::parse(
+                        "story add: --notebooklm-ingest",
+                        &args.notebooklm_ingest,
+                    )?,
                 })?;
                 println!("Story {} added.", args.id);
             }
@@ -627,6 +690,14 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                     release_proof_required: parse_optional_bool(
                         "story update: --release-proof",
                         args.release_proof,
+                    )?,
+                    codegraph_ingest_required: parse_optional_bool(
+                        "story update: --codegraph-ingest",
+                        args.codegraph_ingest,
+                    )?,
+                    notebooklm_ingest_required: parse_optional_bool(
+                        "story update: --notebooklm-ingest",
+                        args.notebooklm_ingest,
                     )?,
                 })?;
                 println!("Story {} updated.", args.id);

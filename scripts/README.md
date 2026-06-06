@@ -15,6 +15,7 @@ scripts/bin/harness-cli story ...     # Add or update a story (test matrix row)
 scripts/bin/harness-cli story update --id US-001 --unit 1 --integration 1 --e2e 0 --platform 0
 scripts/bin/harness-cli arch-check --story US-001
 scripts/bin/harness-cli story verify US-001  # Run proof command and governance gate
+scripts/bin/harness-cli context ingest --story US-001 --source codegraph --file impact.json
 scripts/bin/harness-cli decision ...  # Add a decision or run its verification
 scripts/bin/harness-cli backlog ...   # Add or close a backlog item
 scripts/bin/harness-cli trace ...     # Record and auto-score an agent execution trace
@@ -61,6 +62,7 @@ scripts/bin/harness-cli intake ...
 scripts/bin/harness-cli story add ...
 scripts/bin/harness-cli story update ...
 scripts/bin/harness-cli story verify ...
+scripts/bin/harness-cli context ingest ...
 scripts/bin/harness-cli arch-check ...
 scripts/bin/harness-cli decision add ...
 scripts/bin/harness-cli decision verify ...
@@ -171,6 +173,30 @@ Stories opt into the blocking evidence requirement explicitly:
 
 ```powershell
 .\scripts\bin\harness-cli.exe story update --id US-021 --release-proof 1
+```
+
+## Context Ingest
+
+Validate a file-based MCP artifact without calling the provider:
+
+```powershell
+.\scripts\bin\harness-cli.exe context ingest `
+  --story US-024 `
+  --source codegraph `
+  --file .harness/context/codegraph-impact.json
+```
+
+Supported sources are `codegraph` and `notebooklm`. The command validates the
+US-023 contract and provenance, writes a `context-ingest-result` JSON report,
+and stores a summary in SQLite. Only `pass` maps context into the latest linked
+intake. `fail` and `inconclusive` remain durable audit evidence and exit
+non-zero.
+
+Stories can require passing source evidence explicitly:
+
+```powershell
+.\scripts\bin\harness-cli.exe story update --id US-024 --codegraph-ingest 1
+.\scripts\bin\harness-cli.exe story update --id US-024 --notebooklm-ingest 1
 ```
 
 ## Future Command Contract

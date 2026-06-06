@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
 use crate::domain::{
-    ArchitectureCheckResult, BacklogFilter, BacklogRecord, BoolFlag, CsvList, DecisionRecord,
-    FrictionRecord, HarnessStats, InputType, IntakeRecord, ReleaseVerificationReport, RiskLane,
-    StoryGateResult, StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
+    ArchitectureCheckResult, BacklogFilter, BacklogRecord, BoolFlag, ContextIngestReport,
+    ContextSource, CsvList, DecisionRecord, FrictionRecord, HarnessStats, InputType, IntakeRecord,
+    ReleaseVerificationReport, RiskLane, StoryGateResult, StoryMatrixRecord, StoryVerifyStatus,
+    TraceRecord, TraceScoreResult,
 };
 use crate::infrastructure::{HarnessRepository, SqliteHarnessRepository};
 
@@ -44,6 +45,27 @@ pub struct ContextPackData {
     pub intake_notes: Option<String>,
     pub code_impact_summary: Option<String>,
     pub grounded_context: Option<String>,
+    pub context_ingests: Vec<ContextIngestSummary>,
+}
+
+#[derive(Debug)]
+pub struct ContextIngestSummary {
+    pub source: String,
+    pub result: String,
+    pub schema_version: Option<String>,
+    pub artifact_path: String,
+    pub artifact_sha256: String,
+    pub summary: Option<String>,
+    pub report_path: String,
+    pub checked_at: String,
+}
+
+#[derive(Debug)]
+pub struct ContextIngestInput {
+    pub story_id: String,
+    pub source: ContextSource,
+    pub file: PathBuf,
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -55,6 +77,8 @@ pub struct StoryAddInput {
     pub verify_command: Option<String>,
     pub notes: Option<String>,
     pub release_proof_required: BoolFlag,
+    pub codegraph_ingest_required: BoolFlag,
+    pub notebooklm_ingest_required: BoolFlag,
 }
 
 #[derive(Debug)]
@@ -68,6 +92,8 @@ pub struct StoryUpdateInput {
     pub platform: Option<BoolFlag>,
     pub verify_command: Option<String>,
     pub release_proof_required: Option<BoolFlag>,
+    pub codegraph_ingest_required: Option<BoolFlag>,
+    pub notebooklm_ingest_required: Option<BoolFlag>,
 }
 
 #[derive(Debug)]
@@ -178,6 +204,13 @@ impl HarnessService {
         input: ReleaseVerifyInput,
     ) -> crate::infrastructure::Result<(PathBuf, ReleaseVerificationReport)> {
         self.repository.verify_release(input)
+    }
+
+    pub fn ingest_context(
+        &self,
+        input: ContextIngestInput,
+    ) -> crate::infrastructure::Result<(PathBuf, ContextIngestReport)> {
+        self.repository.ingest_context(input)
     }
 
     pub fn check_architecture(
@@ -329,6 +362,28 @@ impl HarnessService {
         markdown.push_str(
             "*   Unknown data must be parsed at boundaries before entering inner code.\n",
         );
+        markdown.push('\n');
+
+        markdown.push_str("## 6. Validated Context Ingest Evidence\n");
+        if data.context_ingests.is_empty() {
+            markdown.push_str("*No validated context ingest evidence available.*\n");
+        } else {
+            for ingest in &data.context_ingests {
+                markdown.push_str(&format!(
+                    "*   **{}:** {} (schema {}, artifact `{}`, SHA256 `{}`, report `{}`, checked {})\n",
+                    ingest.source,
+                    ingest.result,
+                    ingest.schema_version.as_deref().unwrap_or("unknown"),
+                    ingest.artifact_path,
+                    ingest.artifact_sha256,
+                    ingest.report_path,
+                    ingest.checked_at
+                ));
+                if let Some(summary) = &ingest.summary {
+                    markdown.push_str(&format!("    * Summary: {}\n", summary));
+                }
+            }
+        }
 
         std::fs::write(&filepath, markdown)?;
 

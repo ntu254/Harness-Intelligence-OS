@@ -102,7 +102,9 @@ Real MCP integrations use the file-based boundary accepted in Decision `0010`.
 Providers produce versioned CodeGraph or NotebookLM artifacts; Harness owns
 validation, mapping, and durable ingestion. Provider unavailability is
 `inconclusive`, not an empty successful context. US-023 defines the contracts;
-the future `context ingest` command is not implemented yet.
+US-024 implements `context ingest` without calling either provider. Passing
+artifacts can update the linked intake and context pack. Failed or inconclusive
+artifacts remain audit evidence but never satisfy an explicit story gate.
 
 This separation keeps policy docs stable and human-readable while giving agents
 a structured, queryable record of operational state. It also prepares the
