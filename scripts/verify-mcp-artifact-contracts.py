@@ -151,6 +151,7 @@ expect_valid(validators["codegraph"], failed_codegraph, "failed CodeGraph artifa
 inconclusive_notebooklm = copy.deepcopy(notebooklm)
 inconclusive_notebooklm["status"] = "inconclusive"
 inconclusive_notebooklm.pop("brief")
+inconclusive_notebooklm["provenance"]["sources"] = []
 inconclusive_notebooklm["unavailable"] = {
     "reason": "provider_unavailable",
     "retryable": True,

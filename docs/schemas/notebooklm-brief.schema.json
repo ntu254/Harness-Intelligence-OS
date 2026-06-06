@@ -73,6 +73,15 @@
         "required": [
           "brief"
         ],
+        "properties": {
+          "provenance": {
+            "properties": {
+              "sources": {
+                "minItems": 1
+              }
+            }
+          }
+        },
         "not": {
           "anyOf": [
             {
@@ -164,7 +173,6 @@
         },
         "sources": {
           "type": "array",
-          "minItems": 1,
           "items": {
             "type": "object",
             "additionalProperties": false,

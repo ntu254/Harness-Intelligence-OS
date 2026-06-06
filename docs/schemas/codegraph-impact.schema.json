@@ -73,6 +73,15 @@
         "required": [
           "impact"
         ],
+        "properties": {
+          "provenance": {
+            "properties": {
+              "inputs": {
+                "minItems": 1
+              }
+            }
+          }
+        },
         "not": {
           "anyOf": [
             {
@@ -174,7 +183,6 @@
         },
         "inputs": {
           "type": "array",
-          "minItems": 1,
           "items": {
             "type": "object",
             "additionalProperties": false,

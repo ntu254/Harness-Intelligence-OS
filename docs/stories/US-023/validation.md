@@ -54,4 +54,5 @@ scripts/bin/harness-cli story verify US-023
 - GitHub milestone
   `HI-OS v0.4.0: Real MCP Adapter Layer` and issue `#1` track the initiative
   and US-023.
-- Trace #13 achieved Detailed 3/3 and the final story governance gate passed.
+- Trace #13 and final edge-case Trace #14 achieved Detailed 3/3; the final
+  story governance gate passed after unavailable-source validation.
