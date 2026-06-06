@@ -87,16 +87,28 @@ The implemented Harness command shape is:
 ```text
 harness-cli notebooklm brief \
   --story US-026 \
+  --notebook <provider-notebook-id-or-alias> \
   --query <grounded-question> \
-  [--notebook <provider-notebook-id-or-url>] \
+  [--profile <provider-profile>] \
+  [--timeout <seconds>] \
   [--output <artifact.json>] \
   [--raw-output <provider-response.json>]
 ```
 
-The initial provider invocation is `nlm ask --json --query <grounded-question>`
-with optional `--notebook <provider-notebook-id-or-url>`. If the provider CLI
-changes, the adapter may revise provider-specific invocation internals while
-preserving the Harness command and accepted trust boundary above.
+Provider discovery against `notebooklm-mcp-cli` `0.7.1` showed the real CLI
+contract is:
+
+```text
+nlm query notebook --json [--profile <profile>] [--timeout <seconds>] \
+  <notebook-id-or-alias> <question>
+```
+
+The provider JSON shape includes `answer`, `sources_used`, `citations`, and
+`references` for grounded responses. The adapter maps provider source ids into
+schema-stable `SRC-*` ids and produces one or more cited Harness claims. If the
+provider CLI changes again, the adapter may revise provider-specific invocation
+internals while preserving the Harness command and accepted trust boundary
+above.
 
 ## Data Model
 

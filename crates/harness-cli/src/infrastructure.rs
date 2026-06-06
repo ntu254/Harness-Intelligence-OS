@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -1090,7 +1091,7 @@ impl HarnessRepository for SqliteHarnessRepository {
             command_output(&input.executable, &["--version"], &self.repo_root, None)
                 .ok()
                 .filter(|output| output.status.success())
-                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                .map(|output| first_non_empty_line(&output.stdout))
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "unknown".to_owned());
 
@@ -1247,6 +1248,25 @@ impl HarnessRepository for SqliteHarnessRepository {
                 "NotebookLM brief query must not be empty".to_owned(),
             ));
         }
+        if input.notebook.trim().is_empty() {
+            return Err(HarnessInfraError::InvalidContextIngest(
+                "NotebookLM notebook id must not be empty".to_owned(),
+            ));
+        }
+        if let Some(profile) = &input.profile {
+            if profile.trim().is_empty() {
+                return Err(HarnessInfraError::InvalidContextIngest(
+                    "NotebookLM profile must not be empty when provided".to_owned(),
+                ));
+            }
+        }
+        if let Some(timeout) = input.timeout_seconds {
+            if !timeout.is_finite() || timeout <= 0.0 {
+                return Err(HarnessInfraError::InvalidContextIngest(
+                    "NotebookLM timeout must be a positive number".to_owned(),
+                ));
+            }
+        }
         let connection = self.open_existing()?;
         let story_exists = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM story WHERE id=?1);",
@@ -1278,29 +1298,26 @@ impl HarnessRepository for SqliteHarnessRepository {
             command_output(&input.executable, &["--version"], &self.repo_root, None)
                 .ok()
                 .filter(|output| output.status.success())
-                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                .map(|output| first_non_empty_line(&output.stdout))
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "unknown".to_owned());
 
         let mut provider_args = vec![
-            "ask".to_owned(),
+            "query".to_owned(),
+            "notebook".to_owned(),
             "--json".to_owned(),
-            "--query".to_owned(),
-            input.query.clone(),
         ];
-        if let Some(notebook) = &input.notebook {
-            if notebook.trim().is_empty() {
-                return Err(HarnessInfraError::InvalidContextIngest(
-                    "NotebookLM notebook id must not be empty when provided".to_owned(),
-                ));
-            }
-            provider_args.push("--notebook".to_owned());
-            provider_args.push(notebook.clone());
+        if let Some(profile) = &input.profile {
+            provider_args.push("--profile".to_owned());
+            provider_args.push(profile.clone());
         }
-        let request_label = match &input.notebook {
-            Some(notebook) => format!("notebook:{notebook}:query:{}", input.query),
-            None => format!("query:{}", input.query),
-        };
+        if let Some(timeout) = input.timeout_seconds {
+            provider_args.push("--timeout".to_owned());
+            provider_args.push(format_provider_timeout(timeout));
+        }
+        provider_args.push(input.notebook.clone());
+        provider_args.push(input.query.clone());
+        let request_label = format!("notebook:{}:query:{}", input.notebook, input.query);
         let provider_command = format!("{} {}", input.executable, provider_args.join(" "));
         let invocation_id = uuid_from_sha256(&format!(
             "{}:{}:{}",
@@ -3296,6 +3313,7 @@ struct CodeGraphImpactNode {
 
 #[derive(Debug, Deserialize)]
 struct NotebookProviderOutput {
+    #[serde(alias = "answer")]
     summary: String,
     #[serde(default)]
     constraints: Vec<String>,
@@ -3303,13 +3321,21 @@ struct NotebookProviderOutput {
     open_questions: Vec<String>,
     #[serde(default, alias = "affectedDocs")]
     affected_docs: Vec<String>,
+    #[serde(default, alias = "sourcesUsed")]
+    sources_used: Vec<serde_json::Value>,
+    #[serde(default)]
+    citations: BTreeMap<String, String>,
+    #[serde(default)]
+    references: Vec<NotebookProviderReference>,
+    #[serde(default)]
     sources: Vec<NotebookProviderSource>,
+    #[serde(default)]
     claims: Vec<NotebookProviderClaim>,
 }
 
 #[derive(Debug, Deserialize)]
 struct NotebookProviderSource {
-    #[serde(alias = "sourceId", alias = "id")]
+    #[serde(alias = "sourceId", alias = "source_id", alias = "id")]
     source_id: String,
     title: String,
     uri: String,
@@ -3327,18 +3353,29 @@ struct NotebookProviderClaim {
     #[serde(default, alias = "claimId")]
     claim_id: Option<String>,
     statement: String,
+    #[serde(default)]
     citations: Vec<NotebookProviderCitation>,
 }
 
 #[derive(Debug, Deserialize)]
 struct NotebookProviderCitation {
-    #[serde(alias = "sourceId")]
+    #[serde(alias = "sourceId", alias = "source_id")]
     source_id: String,
     locator: String,
     #[serde(default)]
     quote: Option<String>,
     #[serde(default, alias = "quoteSha256")]
     quote_sha256: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NotebookProviderReference {
+    #[serde(alias = "sourceId", alias = "source_id")]
+    source_id: String,
+    #[serde(default, alias = "citationNumber", alias = "citation_number")]
+    citation_number: Option<u32>,
+    #[serde(default, alias = "citedText", alias = "cited_text")]
+    cited_text: Option<String>,
 }
 
 fn command_output(
@@ -3420,6 +3457,15 @@ fn git_output(repo_root: &Path, args: &[&str]) -> Option<String> {
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+fn first_non_empty_line(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .unwrap_or("")
+        .to_owned()
 }
 
 fn write_provider_response(
@@ -3814,71 +3860,9 @@ fn normalize_notebook_output(
         }
     };
 
-    let sources = response
-        .sources
-        .iter()
-        .map(|source| {
-            let hash_input = source
-                .sha256
-                .clone()
-                .or_else(|| source.content.clone())
-                .or_else(|| source.text.clone())
-                .unwrap_or_else(|| format!("{}:{}:{}", source.source_id, source.title, source.uri));
-            let sha256 = source
-                .sha256
-                .clone()
-                .unwrap_or_else(|| format!("{:x}", Sha256::digest(hash_input.as_bytes())));
-            serde_json::json!({
-                "source_id": normalize_notebook_source_id(&source.source_id),
-                "title": source.title,
-                "uri": source.uri,
-                "sha256": sha256,
-                "retrieved_at": source
-                    .retrieved_at
-                    .clone()
-                    .unwrap_or_else(|| generated_at.to_owned())
-            })
-        })
-        .collect::<Vec<_>>();
-
-    let claims = response
-        .claims
-        .iter()
-        .enumerate()
-        .map(|(index, claim)| {
-            let citations = claim
-                .citations
-                .iter()
-                .map(|citation| {
-                    let mut value = serde_json::json!({
-                        "source_id": normalize_notebook_source_id(&citation.source_id),
-                        "locator": citation.locator,
-                    });
-                    let quote_hash = citation.quote_sha256.clone().or_else(|| {
-                        citation
-                            .quote
-                            .as_ref()
-                            .map(|quote| format!("{:x}", Sha256::digest(quote.as_bytes())))
-                    });
-                    if let Some(hash) = quote_hash {
-                        value
-                            .as_object_mut()
-                            .expect("citation is an object")
-                            .insert("quote_sha256".to_owned(), serde_json::json!(hash));
-                    }
-                    value
-                })
-                .collect::<Vec<_>>();
-            serde_json::json!({
-                "claim_id": claim
-                    .claim_id
-                    .clone()
-                    .unwrap_or_else(|| format!("NL-{}", index + 1)),
-                "statement": claim.statement,
-                "citations": citations
-            })
-        })
-        .collect::<Vec<_>>();
+    let source_id_map = notebook_source_id_map(&response);
+    let sources = notebook_sources(&response, &source_id_map, generated_at);
+    let claims = notebook_claims(&response, &source_id_map);
 
     let mut artifact = notebook_base_artifact(
         story_id,
@@ -3938,6 +3922,276 @@ fn normalize_notebook_output(
     }
 }
 
+fn notebook_source_id_map(response: &NotebookProviderOutput) -> BTreeMap<String, String> {
+    let mut source_keys = BTreeSet::new();
+    for source in &response.sources {
+        if let Some(source_id) = notebook_source_key(&source.source_id) {
+            source_keys.insert(source_id);
+        }
+    }
+    for claim in &response.claims {
+        for citation in &claim.citations {
+            if let Some(source_id) = notebook_source_key(&citation.source_id) {
+                source_keys.insert(source_id);
+            }
+        }
+    }
+    for reference in &response.references {
+        if let Some(source_id) = notebook_source_key(&reference.source_id) {
+            source_keys.insert(source_id);
+        }
+    }
+    for source_id in response.citations.values() {
+        if let Some(source_id) = notebook_source_key(source_id) {
+            source_keys.insert(source_id);
+        }
+    }
+    for source in &response.sources_used {
+        if let Some(source_id) = notebook_source_id_from_value(source) {
+            source_keys.insert(source_id);
+        }
+    }
+
+    let mut used = BTreeSet::new();
+    let mut next_id = 1usize;
+    source_keys
+        .into_iter()
+        .map(|source_id| {
+            let normalized = normalize_notebook_source_id(&source_id);
+            let canonical =
+                if is_schema_notebook_source_id(&normalized) && !used.contains(&normalized) {
+                    normalized
+                } else {
+                    loop {
+                        let candidate = format!("SRC-{next_id}");
+                        next_id += 1;
+                        if !used.contains(&candidate) {
+                            break candidate;
+                        }
+                    }
+                };
+            used.insert(canonical.clone());
+            (source_id, canonical)
+        })
+        .collect()
+}
+
+fn notebook_sources(
+    response: &NotebookProviderOutput,
+    source_id_map: &BTreeMap<String, String>,
+    generated_at: &str,
+) -> Vec<serde_json::Value> {
+    let mut emitted = BTreeSet::new();
+    let mut sources = Vec::new();
+
+    for source in &response.sources {
+        let Some(source_key) = notebook_source_key(&source.source_id) else {
+            continue;
+        };
+        let source_id = canonical_notebook_source_id(source_id_map, &source_key);
+        if !emitted.insert(source_id.clone()) {
+            continue;
+        }
+        let title = if source.title.trim().is_empty() {
+            format!("NotebookLM source {source_key}")
+        } else {
+            source.title.clone()
+        };
+        let uri = if source.uri.trim().is_empty() {
+            format!("notebooklm://source/{source_key}")
+        } else {
+            source.uri.clone()
+        };
+        let hash_input = source
+            .sha256
+            .clone()
+            .or_else(|| source.content.clone())
+            .or_else(|| source.text.clone())
+            .unwrap_or_else(|| format!("{}:{}:{}", source.source_id, title, uri));
+        let sha256 = source
+            .sha256
+            .clone()
+            .unwrap_or_else(|| format!("{:x}", Sha256::digest(hash_input.as_bytes())));
+        sources.push(serde_json::json!({
+            "source_id": source_id,
+            "title": title,
+            "uri": uri,
+            "sha256": sha256,
+            "retrieved_at": source
+                .retrieved_at
+                .clone()
+                .unwrap_or_else(|| generated_at.to_owned())
+        }));
+    }
+
+    for (source_key, source_id) in source_id_map {
+        if !emitted.insert(source_id.clone()) {
+            continue;
+        }
+        let cited_text = response
+            .references
+            .iter()
+            .find(|reference| reference.source_id.trim() == source_key)
+            .and_then(|reference| reference.cited_text.as_ref())
+            .filter(|text| !text.trim().is_empty())
+            .map(String::as_str)
+            .unwrap_or(source_key);
+        sources.push(serde_json::json!({
+            "source_id": source_id,
+            "title": format!("NotebookLM source {source_key}"),
+            "uri": format!("notebooklm://source/{source_key}"),
+            "sha256": format!("{:x}", Sha256::digest(cited_text.as_bytes())),
+            "retrieved_at": generated_at
+        }));
+    }
+
+    sources
+}
+
+fn notebook_claims(
+    response: &NotebookProviderOutput,
+    source_id_map: &BTreeMap<String, String>,
+) -> Vec<serde_json::Value> {
+    if !response.claims.is_empty() {
+        return response
+            .claims
+            .iter()
+            .enumerate()
+            .map(|(index, claim)| {
+                let citations = claim
+                    .citations
+                    .iter()
+                    .map(|citation| {
+                        let mut value = serde_json::json!({
+                            "source_id": canonical_notebook_source_id(
+                                source_id_map,
+                                &citation.source_id
+                            ),
+                            "locator": citation.locator,
+                        });
+                        let quote_hash = citation.quote_sha256.clone().or_else(|| {
+                            citation
+                                .quote
+                                .as_ref()
+                                .map(|quote| format!("{:x}", Sha256::digest(quote.as_bytes())))
+                        });
+                        if let Some(hash) = quote_hash {
+                            value
+                                .as_object_mut()
+                                .expect("citation is an object")
+                                .insert("quote_sha256".to_owned(), serde_json::json!(hash));
+                        }
+                        value
+                    })
+                    .collect::<Vec<_>>();
+                serde_json::json!({
+                    "claim_id": claim
+                        .claim_id
+                        .clone()
+                        .unwrap_or_else(|| format!("NL-{}", index + 1)),
+                    "statement": claim.statement,
+                    "citations": citations
+                })
+            })
+            .collect();
+    }
+
+    let mut citations = response
+        .references
+        .iter()
+        .filter_map(|reference| {
+            notebook_source_key(&reference.source_id).map(|source_id| {
+                let mut value = serde_json::json!({
+                    "source_id": canonical_notebook_source_id(source_id_map, &source_id),
+                    "locator": reference
+                        .citation_number
+                        .map(|number| format!("citation:{number}"))
+                        .unwrap_or_else(|| "citation".to_owned()),
+                });
+                if let Some(cited_text) = reference
+                    .cited_text
+                    .as_ref()
+                    .filter(|text| !text.trim().is_empty())
+                {
+                    value
+                        .as_object_mut()
+                        .expect("citation is an object")
+                        .insert(
+                            "quote_sha256".to_owned(),
+                            serde_json::json!(format!(
+                                "{:x}",
+                                Sha256::digest(cited_text.as_bytes())
+                            )),
+                        );
+                }
+                value
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if citations.is_empty() {
+        citations = response
+            .citations
+            .iter()
+            .filter_map(|(number, source_id)| {
+                notebook_source_key(source_id).map(|source_id| {
+                    serde_json::json!({
+                        "source_id": canonical_notebook_source_id(source_id_map, &source_id),
+                        "locator": format!("citation:{number}"),
+                    })
+                })
+            })
+            .collect();
+    }
+
+    if citations.is_empty() {
+        Vec::new()
+    } else {
+        vec![serde_json::json!({
+            "claim_id": "NL-1",
+            "statement": response.summary,
+            "citations": citations
+        })]
+    }
+}
+
+fn notebook_source_key(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn notebook_source_id_from_value(value: &serde_json::Value) -> Option<String> {
+    if let Some(source_id) = value.as_str() {
+        return notebook_source_key(source_id);
+    }
+    let object = value.as_object()?;
+    for key in ["source_id", "sourceId", "id"] {
+        if let Some(source_id) = object.get(key).and_then(serde_json::Value::as_str) {
+            return notebook_source_key(source_id);
+        }
+    }
+    None
+}
+
+fn canonical_notebook_source_id(
+    source_id_map: &BTreeMap<String, String>,
+    source_id: &str,
+) -> String {
+    notebook_source_key(source_id)
+        .and_then(|key| source_id_map.get(&key).cloned())
+        .unwrap_or_else(|| normalize_notebook_source_id(source_id))
+}
+
+fn is_schema_notebook_source_id(value: &str) -> bool {
+    value
+        .strip_prefix("SRC-")
+        .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()))
+}
+
 fn notebook_failed_artifact(
     mut artifact: serde_json::Value,
     code: &str,
@@ -3979,12 +4233,21 @@ fn notebook_provider_failure_detail(stdout: &[u8], stderr: &[u8]) -> String {
     String::from_utf8_lossy(stdout).trim().to_owned()
 }
 
+fn format_provider_timeout(timeout: f64) -> String {
+    if timeout.fract() == 0.0 {
+        format!("{timeout:.0}")
+    } else {
+        timeout.to_string()
+    }
+}
+
 fn notebook_unavailable_reason(detail: &str) -> &'static str {
     let normalized = detail.to_ascii_lowercase();
     if normalized.contains("timeout") || normalized.contains("timed out") {
         "timeout"
     } else if normalized.contains("auth")
         || normalized.contains("login")
+        || normalized.contains("profile")
         || normalized.contains("permission")
         || normalized.contains("denied")
         || normalized.contains("session")
@@ -5135,13 +5398,18 @@ mod tests {
             .produce_notebook_brief(NotebookBriefInput {
                 story_id: "US-NO-NOTEBOOKLM".to_owned(),
                 query: "Find grounded product rules.".to_owned(),
-                notebook: None,
+                notebook: "hios-provider-proof".to_owned(),
+                profile: Some("default".to_owned()),
+                timeout_seconds: Some(30.0),
                 output: None,
                 raw_output: None,
                 executable: "harness-notebooklm-does-not-exist".to_owned(),
             })
             .unwrap();
 
+        assert!(result
+            .provider_command
+            .contains("query notebook --json --profile default --timeout 30 hios-provider-proof"));
         assert_eq!(
             result.ingest_report.status,
             ContextIngestStatus::Inconclusive
@@ -5202,6 +5470,47 @@ mod tests {
         assert_eq!(
             artifact["brief"]["claims"][0]["citations"][0]["source_id"],
             "SRC-1"
+        );
+    }
+
+    #[test]
+    fn notebook_adapter_normalizes_real_nlm_query_json_into_passing_artifact() {
+        let stdout = br#"{
+            "answer": "Harness must keep NotebookLM session state outside SQLite.",
+            "conversation_id": "conversation-123",
+            "sources_used": ["source-abc"],
+            "citations": {"1": "source-abc"},
+            "references": [{
+                "source_id": "source-abc",
+                "citation_number": 1,
+                "cited_text": "Harness never stores Google credentials, cookies, browser profiles, tokens, or provider session files."
+            }]
+        }"#;
+
+        let artifact = normalize_notebook_output(
+            "US-026",
+            "2026-06-07T00:00:00Z",
+            "0.7.1",
+            "run-real",
+            ".harness/context/US-026-notebooklm-provider-response.json",
+            stdout,
+        );
+        let bytes = serde_json::to_vec(&artifact).unwrap();
+        let validation = validate_context_artifact(
+            ContextSource::Notebooklm,
+            "US-026",
+            &bytes,
+            &format!("{:x}", Sha256::digest(&bytes)),
+            Path::new("."),
+        );
+
+        assert_eq!(validation.status, ContextIngestStatus::Pass);
+        assert_eq!(artifact["status"], "pass");
+        assert_eq!(artifact["provenance"]["sources"][0]["source_id"], "SRC-1");
+        assert_eq!(artifact["brief"]["claims"][0]["claim_id"], "NL-1");
+        assert_eq!(
+            artifact["brief"]["claims"][0]["citations"][0]["locator"],
+            "citation:1"
         );
     }
 

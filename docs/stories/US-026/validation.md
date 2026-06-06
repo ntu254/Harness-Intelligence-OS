@@ -40,7 +40,9 @@ Adapter command:
 ```text
 harness-cli notebooklm brief \
   --story US-026 \
+  --notebook <provider-notebook-id-or-alias> \
   --query "Find grounded product rules and prior decisions relevant to US-026." \
+  --timeout 120 \
   --output .harness/context/US-026-notebooklm-brief.json \
   --raw-output .harness/context/US-026-notebooklm-provider-response.json
 ```
@@ -52,7 +54,7 @@ cargo fmt --check
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 python scripts/verify-mcp-artifact-contracts.py
-harness-cli notebooklm brief --story US-026 --query <grounded-question>
+harness-cli notebooklm brief --story US-026 --notebook <provider-notebook-id-or-alias> --query <grounded-question>
 harness-cli context ingest --story US-026 --source notebooklm --file <generated-artifact>
 harness-cli context --story US-026
 harness-cli arch-check --story US-026
@@ -103,6 +105,8 @@ Implementation evidence recorded so far:
 - Story moved to In Progress after provider contract acceptance.
 - CLI command added: `harness-cli notebooklm brief`.
 - Adapter invokes `notebooklm-mcp-cli` through local executable `nlm`.
+- Provider discovery corrected the invocation from the planned `nlm ask` shape
+  to the actual `nlm query notebook --json <notebook> <question>` shape.
 - Adapter writes `.harness/context/<story>-notebooklm-provider-response.json`
   when raw provider output is available.
 - Adapter writes `.harness/context/<story>-notebooklm-brief.json`.
@@ -114,11 +118,26 @@ Implementation evidence recorded so far:
 - Provider summaries or claims without citations record `fail`.
 - Valid cited raw provider output normalizes into a schema-valid passing
   `notebooklm-brief` artifact in tests.
+- Real `nlm query notebook --json` output shape (`answer`, `sources_used`,
+  `citations`, `references`) normalizes into a schema-valid passing
+  `notebooklm-brief` artifact in tests.
+- Validation ladder passes locally: `cargo fmt --check`, `cargo test
+  --workspace` with 42 tests, `cargo clippy --workspace --all-targets -- -D
+  warnings`, `python scripts/verify-mcp-artifact-contracts.py`, and release
+  build.
 - Local smoke with missing executable produced inconclusive evidence at
   `.harness/context/US-026-notebooklm-brief.json` and
   `.harness/context/US-026-notebooklm-ingest-result.json`.
-- `where nlm` found no local provider executable, so live NotebookLM proof and
-  final story gate remain intentionally unclaimed.
+- `notebooklm-mcp-cli` `0.7.1` was installed locally and provides `nlm` plus
+  `notebooklm-mcp`.
+- `nlm login --check` reports that the default profile is missing, so live
+  NotebookLM proof and final story gate remain intentionally unclaimed until a
+  provider profile and notebook are available.
+- Real provider smoke writes schema-valid inconclusive evidence because
+  `nlm query notebook --json --timeout 120 hios-provider-proof <question>`
+  returns `Error: Profile 'default' not found. Run 'nlm login' first.`.
+- `harness-cli story verify US-026` now records mechanical verification pass
+  and governance gate fail with only `NotebookLM context ingest proof` missing.
 - No Google credentials, cookies, tokens, browser profiles, session files, MCP
   server direct writes, release/tag, installer pin, or CodeGraph changes.
 
@@ -152,7 +171,9 @@ Implementation evidence recorded so far:
 - Planning trace: `#19`, Detailed `3/3`.
 - Provider contract design-review trace: `#20`, Detailed `3/3`.
 - Implementation trace: `#21`, Detailed `3/3`, outcome `partial` because live
-  `nlm` provider proof is unavailable locally.
+  `nlm` provider proof was unavailable locally before provider installation.
+- Provider-contract correction trace: `#24`, Detailed `3/3`, outcome
+  `partial` because authenticated NotebookLM provider proof is still missing.
 - Decision 0010 remains the governing file-based boundary.
 - Provider contract: accepted for implementation planning.
 - Default provider: `notebooklm-mcp-cli`.

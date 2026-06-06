@@ -17,9 +17,9 @@ normalizes it into the US-023 `notebooklm-brief` schema, and feeds that artifact
 through the existing US-024 ingest path.
 
 The implementation surface is `harness-cli notebooklm brief`. The command uses
-the local `nlm` executable, accepts a grounded query and optional notebook id,
-emits the normalized artifact as a file, and relies on `context ingest` for all
-durable state changes.
+the local `nlm` executable, accepts a grounded query and required provider
+notebook id or alias, emits the normalized artifact as a file, and relies on
+`context ingest` for all durable state changes.
 
 Only cited, provenance-backed claims can become grounded context. Provider
 unavailability, missing session/auth, insufficient citations, or ambiguous

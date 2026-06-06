@@ -394,7 +394,11 @@ struct NotebookLmBriefArgs {
     #[arg(long)]
     query: String,
     #[arg(long)]
-    notebook: Option<String>,
+    notebook: String,
+    #[arg(long)]
+    profile: Option<String>,
+    #[arg(long, default_value = "120")]
+    timeout: String,
     #[arg(long)]
     output: Option<PathBuf>,
     #[arg(long = "raw-output")]
@@ -460,6 +464,8 @@ pub enum InterfaceError {
     CurrentDir(std::io::Error),
     #[error("query sql requires a SQL statement")]
     EmptySql,
+    #[error("{0}")]
+    InvalidNumber(String),
     #[error(
         "impact report must be a JSON object with top-level string fields and string arrays: {0}"
     )]
@@ -719,6 +725,11 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                     story_id: args.story,
                     query: args.query,
                     notebook: args.notebook,
+                    profile: args.profile,
+                    timeout_seconds: Some(parse_positive_float(
+                        "notebooklm brief: --timeout",
+                        &args.timeout,
+                    )?),
                     output: args.output,
                     raw_output: args.raw_output,
                     executable: args.executable,
@@ -1070,6 +1081,19 @@ fn parse_optional_bool(
         .map(|inner| BoolFlag::parse(label, &inner))
         .transpose()
         .map_err(InterfaceError::from)
+}
+
+fn parse_positive_float(label: &str, value: &str) -> Result<f64, InterfaceError> {
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| InterfaceError::InvalidNumber(format!("{label} must be a positive number")))?;
+    if parsed.is_finite() && parsed > 0.0 {
+        Ok(parsed)
+    } else {
+        Err(InterfaceError::InvalidNumber(format!(
+            "{label} must be a positive number"
+        )))
+    }
 }
 
 fn merge_mapped_context_for_auto_intake(
@@ -1557,6 +1581,9 @@ mod tests {
             .render_long_help()
             .to_string();
         assert!(notebook_help.contains("--query <QUERY>"));
+        assert!(notebook_help.contains("--notebook <NOTEBOOK>"));
+        assert!(notebook_help.contains("--profile <PROFILE>"));
+        assert!(notebook_help.contains("--timeout <TIMEOUT>"));
         assert!(notebook_help.contains("--raw-output <RAW_OUTPUT>"));
     }
 

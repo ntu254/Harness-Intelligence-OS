@@ -144,7 +144,7 @@ scripts/bin/harness-cli intake  --type <type> --summary <text> --lane <lane>
 scripts/bin/harness-cli intake  --summary <text> --story <id> --auto --impact-report <report> --business-context <context>
 scripts/bin/harness-cli context --story <id>
 scripts/bin/harness-cli codegraph impact --story <id> --changed-files <paths.txt>
-scripts/bin/harness-cli notebooklm brief --story <id> --query <grounded question>
+scripts/bin/harness-cli notebooklm brief --story <id> --notebook <notebook-id-or-alias> --query <grounded question>
 scripts/bin/harness-cli arch-check --story <id>
 scripts/bin/harness-cli story   add --id <id> --title <text> --lane <lane>
 scripts/bin/harness-cli story   update --id <id> --status <status>

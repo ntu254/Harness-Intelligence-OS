@@ -89,10 +89,11 @@ change `intake --auto` defaults.
 
 The NotebookLM grounded-brief adapter is available through `harness-cli
 notebooklm brief`. It invokes the accepted `notebooklm-mcp-cli` CLI boundary,
-normalizes only citation-backed provider output into a `notebooklm-brief`
-artifact, and composes with `context ingest`. Provider/session/network
-unavailability is inconclusive, while uncited summaries or malformed provider
-output fail and cannot satisfy governance.
+using `nlm query notebook --json`, requires an explicit provider notebook id
+or alias, normalizes only citation-backed provider output into a
+`notebooklm-brief` artifact, and composes with `context ingest`.
+Provider/session/network unavailability is inconclusive, while uncited
+summaries or malformed provider output fail and cannot satisfy governance.
 
 When `intake --auto --story <id>` runs after context evidence has been ingested,
 Harness prefers the latest passing CodeGraph and NotebookLM `context_ingest`

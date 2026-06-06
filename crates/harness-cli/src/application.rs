@@ -101,7 +101,9 @@ pub struct CodeGraphImpactResult {
 pub struct NotebookBriefInput {
     pub story_id: String,
     pub query: String,
-    pub notebook: Option<String>,
+    pub notebook: String,
+    pub profile: Option<String>,
+    pub timeout_seconds: Option<f64>,
     pub output: Option<PathBuf>,
     pub raw_output: Option<PathBuf>,
     pub executable: String,

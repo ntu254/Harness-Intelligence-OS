@@ -50,22 +50,29 @@ Hard gates:
 
 1. Accepted: default provider is `notebooklm-mcp-cli`, invoked through local
    CLI executable `nlm`, with optional MCP server executable `notebooklm-mcp`.
-2. Implemented: `harness-cli notebooklm brief` invokes `nlm ask --json
-   --query <query>` with optional `--notebook`.
+2. Corrected after provider discovery: `harness-cli notebooklm brief` invokes:
+
+   ```text
+   nlm query notebook --json [--profile <profile>] [--timeout <seconds>] <notebook> <query>
+   ```
+
 3. Implemented: raw provider stdout/stderr is written to a raw response file
    when available.
 4. Implemented: typed normalization maps cited provider output into the US-023
    `notebooklm-brief` schema without SQLite access.
 5. Implemented: pass, fail, and inconclusive artifacts compose with US-024
    ingest.
-6. Implemented: tests cover valid cited output, invalid provider JSON,
-   uncited claims, and missing provider executable.
-7. Pending live proof: confirm a local authenticated provider session and
+6. Implemented: tests cover valid cited output, real `nlm query` JSON, invalid
+   provider JSON, uncited claims, and missing provider executable.
+7. Partial live proof: provider tooling is installed and the adapter reaches
+   the real `nlm query notebook` boundary, but the default profile is missing;
+   the resulting artifact is `inconclusive`.
+8. Pending live proof: confirm a local authenticated provider session and
    capture or reference a safe raw grounded response.
-8. Pending live proof: run context pack rendering and final story governance
+9. Pending live proof: run context pack rendering and final story governance
    verification with valid NotebookLM evidence.
-9. Pending hardening: run the full workspace validation ladder and record final
-   trace.
+10. Completed hardening: run the full workspace validation ladder and record a
+    partial trace without claiming NotebookLM pass proof.
 
 ## Stop Conditions
 
