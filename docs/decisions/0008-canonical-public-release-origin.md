@@ -39,9 +39,9 @@ release authority.
 1. Make `ntu254/Harness-Intelligence-OS` the canonical public origin.
    Accepted. This creates one repository for source, development, and
    distribution and removes origin ambiguity.
-2. Keep `hoangnb24/repository-harness` as the canonical public origin.
-   This preserves current installer URLs, but requires an accepted upstream
-   publication path and release ownership.
+2. Keep the former upstream repository as the canonical public origin.
+   Rejected because it would preserve split ownership and require an external
+   publication path.
 3. Split private development and public distribution origins.
    The private origin remains development/staging, while a separate public
    repository becomes the installer and release authority. This preserves
