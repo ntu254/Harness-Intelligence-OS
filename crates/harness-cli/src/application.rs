@@ -171,6 +171,18 @@ pub struct GovernanceReportResult {
 }
 
 #[derive(Debug)]
+pub struct GovernanceDashboardInput {
+    pub report: Option<PathBuf>,
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub struct GovernanceDashboardResult {
+    pub dashboard_path: PathBuf,
+    pub report: GovernanceReport,
+}
+
+#[derive(Debug)]
 pub struct DecisionAddInput {
     pub id: String,
     pub title: String,
@@ -327,6 +339,17 @@ impl HarnessService {
         let (report_path, report) = self.repository.generate_governance_report(input)?;
         Ok(GovernanceReportResult {
             report_path,
+            report,
+        })
+    }
+
+    pub fn export_governance_dashboard(
+        &self,
+        input: GovernanceDashboardInput,
+    ) -> crate::infrastructure::Result<GovernanceDashboardResult> {
+        let (dashboard_path, report) = self.repository.export_governance_dashboard(input)?;
+        Ok(GovernanceDashboardResult {
+            dashboard_path,
             report,
         })
     }

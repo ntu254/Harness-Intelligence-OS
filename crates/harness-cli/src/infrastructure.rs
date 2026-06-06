@@ -15,9 +15,10 @@ use crate::application::{
     AutoIntakeEvidence, BacklogAddInput, BacklogCloseInput, BacklogSuggestInput,
     BrownfieldImportResult, CodeGraphImpactInput, CodeGraphImpactResult, ContextIngestInput,
     ContextIngestSummary, ContextPackData, DecisionAddInput, DecisionVerifyResult,
-    FrictionAddInput, GovernanceReportInput, HarnessContext, InitResult, IntakeInput,
-    MigrateResult, NotebookBriefInput, NotebookBriefResult, QueryTable, ReleaseVerifyInput,
-    RuleSuggestInput, StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput,
+    FrictionAddInput, GovernanceDashboardInput, GovernanceReportInput, HarnessContext, InitResult,
+    IntakeInput, MigrateResult, NotebookBriefInput, NotebookBriefResult, QueryTable,
+    ReleaseVerifyInput, RuleSuggestInput, StoryAddInput, StoryUpdateInput, StoryVerifyResult,
+    TraceInput,
 };
 use crate::domain::{
     normalize_token, path_has_any_segment, score_trace, ArchitectureCheckResult,
@@ -70,6 +71,8 @@ pub enum HarnessInfraError {
     InvalidReleaseInput(String),
     #[error("context ingest input is invalid: {0}")]
     InvalidContextIngest(String),
+    #[error("governance report is invalid: {0}")]
+    InvalidGovernanceReport(String),
     #[error("friction event input is invalid: {0}")]
     InvalidFrictionEvent(String),
     #[error("backlog close: backlog item '{0}' not found")]
@@ -102,6 +105,10 @@ pub trait HarnessRepository {
     fn generate_governance_report(
         &self,
         input: GovernanceReportInput,
+    ) -> Result<(PathBuf, GovernanceReport)>;
+    fn export_governance_dashboard(
+        &self,
+        input: GovernanceDashboardInput,
     ) -> Result<(PathBuf, GovernanceReport)>;
     fn ingest_context(&self, input: ContextIngestInput) -> Result<(PathBuf, ContextIngestReport)>;
     fn auto_intake_evidence(&self, story_id: &str) -> Result<AutoIntakeEvidence>;
@@ -1002,6 +1009,50 @@ impl HarnessRepository for SqliteHarnessRepository {
             self.repo_root.join(output_path)
         };
         write_governance_report(&output_path, &report)?;
+        Ok((output_path, report))
+    }
+
+    fn export_governance_dashboard(
+        &self,
+        input: GovernanceDashboardInput,
+    ) -> Result<(PathBuf, GovernanceReport)> {
+        let report_path = input.report.unwrap_or_else(|| {
+            self.repo_root
+                .join(".harness/reports/governance-report.json")
+        });
+        let report_path = if report_path.is_absolute() {
+            report_path
+        } else {
+            self.repo_root.join(report_path)
+        };
+        let bytes = fs::read(&report_path).map_err(|error| {
+            HarnessInfraError::InvalidGovernanceReport(format!(
+                "could not read '{}': {error}",
+                report_path.display()
+            ))
+        })?;
+        let report = serde_json::from_slice::<GovernanceReport>(&bytes).map_err(|error| {
+            HarnessInfraError::InvalidGovernanceReport(format!(
+                "could not parse '{}': {error}",
+                report_path.display()
+            ))
+        })?;
+        if report.artifact_type != "governance-report" {
+            return Err(HarnessInfraError::InvalidGovernanceReport(format!(
+                "artifact_type '{}' is not governance-report",
+                report.artifact_type
+            )));
+        }
+
+        let output_path = input
+            .output
+            .unwrap_or_else(|| self.repo_root.join(".harness/dashboard/index.html"));
+        let output_path = if output_path.is_absolute() {
+            output_path
+        } else {
+            self.repo_root.join(output_path)
+        };
+        write_governance_dashboard(&output_path, &report)?;
         Ok((output_path, report))
     }
 
@@ -5803,6 +5854,118 @@ fn write_governance_report(path: &Path, report: &GovernanceReport) -> Result<()>
     Ok(())
 }
 
+fn write_governance_dashboard(path: &Path, report: &GovernanceReport) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("html.tmp");
+    fs::write(&temporary, render_governance_dashboard(report))?;
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    fs::rename(temporary, path)?;
+    Ok(())
+}
+
+fn render_governance_dashboard(report: &GovernanceReport) -> String {
+    let mut story_rows = String::new();
+    for story in &report.stories {
+        let missing = if story.missing_evidence.is_empty() {
+            "none".to_owned()
+        } else {
+            story.missing_evidence.join(", ")
+        };
+        story_rows.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}/{}/{}/{}</td><td>{}</td></tr>\n",
+            escape_html(&story.story_id),
+            escape_html(&story.status),
+            escape_html(&story.risk_lane),
+            escape_html(&story.gate_result),
+            story.proof.unit,
+            story.proof.integration,
+            story.proof.e2e,
+            story.proof.platform,
+            escape_html(&missing),
+        ));
+    }
+    let notes = report
+        .maturity_summary
+        .notes
+        .iter()
+        .map(|note| format!("<li>{}</li>", escape_html(note)))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HI-OS Governance Dashboard</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 2rem; color: #172033; }}
+    .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 1rem; }}
+    .card {{ border: 1px solid #d8dee9; border-radius: 0.75rem; padding: 1rem; background: #f8fafc; }}
+    .value {{ font-size: 1.8rem; font-weight: 700; }}
+    table {{ border-collapse: collapse; width: 100%; margin-top: 1.5rem; }}
+    th, td {{ border: 1px solid #d8dee9; padding: 0.5rem; text-align: left; vertical-align: top; }}
+    th {{ background: #edf2f7; }}
+  </style>
+</head>
+<body>
+  <h1>HI-OS Governance Dashboard</h1>
+  <p>Generated at {generated_at} for {origin}.</p>
+  <section class="cards">
+    <div class="card"><div>Maturity</div><div class="value">{level} ({score})</div></div>
+    <div class="card"><div>Stories</div><div class="value">{stories}</div></div>
+    <div class="card"><div>Gate Pass</div><div class="value">{gate_pass}</div></div>
+    <div class="card"><div>Gate Fail</div><div class="value">{gate_fail}</div></div>
+    <div class="card"><div>Gate Not Run</div><div class="value">{gate_not_run}</div></div>
+    <div class="card"><div>Release</div><div class="value">{release}</div></div>
+    <div class="card"><div>Friction Events</div><div class="value">{friction}</div></div>
+    <div class="card"><div>Open Gaps</div><div class="value">{gaps}</div></div>
+  </section>
+  <h2>Maturity Notes</h2>
+  <ul>
+{notes}
+  </ul>
+  <h2>Story Evidence</h2>
+  <table>
+    <thead>
+      <tr><th>Story</th><th>Status</th><th>Lane</th><th>Gate</th><th>Proof u/i/e/p</th><th>Missing Evidence</th></tr>
+    </thead>
+    <tbody>
+{story_rows}    </tbody>
+  </table>
+</body>
+</html>
+"#,
+        generated_at = escape_html(&report.generated_at),
+        origin = escape_html(&report.repository.origin),
+        level = escape_html(&report.maturity_summary.level),
+        score = report.maturity_summary.score,
+        stories = report.story_summary.total,
+        gate_pass = report.gate_summary.pass,
+        gate_fail = report.gate_summary.fail,
+        gate_not_run = report.gate_summary.not_run,
+        release = escape_html(&report.release_summary.release_verify_result),
+        friction = report.friction_summary.events,
+        gaps = report.maturity_summary.open_governance_gaps,
+        notes = notes,
+        story_rows = story_rows,
+    )
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 fn path_for_storage(repo_root: &Path, path: &Path) -> String {
     path.strip_prefix(repo_root)
         .unwrap_or(path)
@@ -5828,9 +5991,9 @@ mod tests {
     use crate::application::{
         BacklogAddInput, BacklogCloseInput, BacklogSuggestInput, CodeGraphImpactInput,
         ContextIngestInput, DecisionAddInput, FrictionAddInput, FrictionEvidenceInput,
-        FrictionProposedActionInput, GovernanceReportInput, HarnessContext, HarnessService,
-        IntakeInput, NotebookBriefInput, ReleaseVerifyInput, RuleSuggestInput, StoryAddInput,
-        StoryUpdateInput, TraceInput,
+        FrictionProposedActionInput, GovernanceDashboardInput, GovernanceReportInput,
+        HarnessContext, HarnessService, IntakeInput, NotebookBriefInput, ReleaseVerifyInput,
+        RuleSuggestInput, StoryAddInput, StoryUpdateInput, TraceInput,
     };
     use crate::domain::{
         BacklogFilter, BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList,
@@ -7618,6 +7781,97 @@ mod tests {
             .notes
             .iter()
             .any(|note| note.contains("inconclusive")));
+    }
+
+    #[test]
+    fn governance_dashboard_exports_static_html_from_report() {
+        let (_temp_dir, repo_root, repository) = context_test_repository();
+        let report_path = repo_root.join(".harness/reports/dashboard-report.json");
+        fs::create_dir_all(report_path.parent().unwrap()).unwrap();
+        fs::write(
+            &report_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema_version": "1.0.0",
+                "artifact_type": "governance-report",
+                "report_id": "88888888-8888-4888-8888-888888888888",
+                "generated_at": "2026-06-07T00:00:00Z",
+                "repository": {
+                    "origin": "example/repo",
+                    "commit": "abcdef1",
+                    "branch": "main"
+                },
+                "story_summary": {
+                    "total": 1,
+                    "implemented": 1,
+                    "in_progress": 0,
+                    "blocked": 0
+                },
+                "gate_summary": {
+                    "pass": 1,
+                    "fail": 0,
+                    "not_run": 0
+                },
+                "validation_summary": {
+                    "commands": [{
+                        "command": "cargo test --workspace",
+                        "result": "pass"
+                    }]
+                },
+                "release_summary": {
+                    "latest_version": "0.5.0",
+                    "release_verify_result": "pass",
+                    "assets_checked": 10
+                },
+                "friction_summary": {
+                    "events": 0,
+                    "high_severity": 0,
+                    "open_backlog_suggestions": 0,
+                    "open_rule_proposals": 0
+                },
+                "maturity_summary": {
+                    "score": 91,
+                    "level": "trusted",
+                    "gate_pass_percent": 100,
+                    "validation_pass_percent": 100,
+                    "release_verified": true,
+                    "open_governance_gaps": 0,
+                    "notes": ["All recorded story gates pass."]
+                },
+                "stories": [{
+                    "story_id": "US-DASH",
+                    "status": "implemented",
+                    "risk_lane": "high_risk",
+                    "proof": {
+                        "unit": true,
+                        "integration": true,
+                        "e2e": true,
+                        "platform": true
+                    },
+                    "gate_result": "pass",
+                    "missing_evidence": ["<missing>"],
+                    "evidence": "dashboard smoke"
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let output = repo_root.join(".harness/dashboard/index.html");
+        let (path, report) = repository
+            .export_governance_dashboard(GovernanceDashboardInput {
+                report: Some(report_path),
+                output: Some(output.clone()),
+            })
+            .unwrap();
+
+        assert_eq!(path, output);
+        assert_eq!(report.maturity_summary.level, "trusted");
+        let html = fs::read_to_string(output).unwrap();
+        assert!(html.contains("HI-OS Governance Dashboard"));
+        assert!(html.contains("trusted (91)"));
+        assert!(html.contains("US-DASH"));
+        assert!(html.contains("&lt;missing&gt;"));
+        assert!(!html.contains("<script"));
     }
 
     #[test]

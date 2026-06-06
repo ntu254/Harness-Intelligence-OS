@@ -28,6 +28,32 @@ Generated reports are validated by:
 python scripts/verify-governance-report-schema.py .harness/reports/governance-report.json
 ```
 
+## Dashboard Export
+
+US-037 adds:
+
+```text
+harness-cli governance dashboard \
+  --report .harness/reports/governance-report.json \
+  --output .harness/dashboard/index.html
+```
+
+If `--report` is omitted, Harness reads:
+
+```text
+.harness/reports/governance-report.json
+```
+
+If `--output` is omitted, Harness writes:
+
+```text
+.harness/dashboard/index.html
+```
+
+The dashboard is standalone static HTML. It uses no external assets, no live
+server, and no script execution. It reads a generated governance report and
+writes only the requested HTML file.
+
 ## Report Shape
 
 A governance report captures:
@@ -68,7 +94,8 @@ policy.
 - Missing or failed evidence remains visible; it is not downgraded to a warning.
 - `inconclusive` remains distinct from `pass`.
 - Runtime report files may live under `.harness/reports/`.
+- Runtime dashboard files may live under `.harness/dashboard/`.
 - US-034 defines the schema only.
 - US-035 implements report generation only.
 - US-036 adds maturity scoring.
-- US-037 exports static dashboard files.
+- US-037 exports static dashboard files only.

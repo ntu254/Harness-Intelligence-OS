@@ -8,9 +8,10 @@ use thiserror::Error;
 use crate::application::{
     BacklogAddInput, BacklogCloseInput, BacklogSuggestInput, BrownfieldImportResult,
     CodeGraphImpactInput, ContextIngestInput, DecisionAddInput, FrictionAddInput,
-    FrictionEvidenceInput, FrictionProposedActionInput, GovernanceReportInput, HarnessContext,
-    HarnessService, InitResult, IntakeInput, MigrateResult, NotebookBriefInput, QueryTable,
-    ReleaseVerifyInput, RuleSuggestInput, StoryAddInput, StoryUpdateInput, TraceInput,
+    FrictionEvidenceInput, FrictionProposedActionInput, GovernanceDashboardInput,
+    GovernanceReportInput, HarnessContext, HarnessService, InitResult, IntakeInput, MigrateResult,
+    NotebookBriefInput, QueryTable, ReleaseVerifyInput, RuleSuggestInput, StoryAddInput,
+    StoryUpdateInput, TraceInput,
 };
 use crate::domain::{
     parse_optional_integer, path_has_any_segment, proof_display, BacklogFilter, BacklogRecord,
@@ -214,10 +215,20 @@ struct GovernanceArgs {
 enum GovernanceAction {
     /// Generate a static governance report JSON artifact.
     Report(GovernanceReportArgs),
+    /// Export a standalone static HTML dashboard from a governance report.
+    Dashboard(GovernanceDashboardArgs),
 }
 
 #[derive(Args, Debug)]
 struct GovernanceReportArgs {
+    #[arg(long)]
+    output: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+struct GovernanceDashboardArgs {
+    #[arg(long)]
+    report: Option<PathBuf>,
     #[arg(long)]
     output: Option<PathBuf>,
 }
@@ -942,6 +953,19 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                     "Maturity: {} ({})",
                     result.report.maturity_summary.level, result.report.maturity_summary.score
                 );
+            }
+            GovernanceAction::Dashboard(args) => {
+                let result = service.export_governance_dashboard(GovernanceDashboardInput {
+                    report: args.report,
+                    output: args.output,
+                })?;
+                println!("Governance dashboard: {}", result.dashboard_path.display());
+                println!(
+                    "Maturity: {} ({})",
+                    result.report.maturity_summary.level, result.report.maturity_summary.score
+                );
+                println!("Stories: {}", result.report.story_summary.total);
+                println!("Gate pass: {}", result.report.gate_summary.pass);
             }
         },
         Command::Story(args) => match args.action {
@@ -1936,6 +1960,16 @@ mod tests {
             .render_long_help()
             .to_string();
         assert!(governance_help.contains("--output <OUTPUT>"));
+
+        let dashboard_help = command
+            .find_subcommand_mut("governance")
+            .unwrap()
+            .find_subcommand_mut("dashboard")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(dashboard_help.contains("--report <REPORT>"));
+        assert!(dashboard_help.contains("--output <OUTPUT>"));
 
         let notebook_help = command
             .find_subcommand_mut("notebooklm")
