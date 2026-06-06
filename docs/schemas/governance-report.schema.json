@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ntu254/Harness-Intelligence-OS/blob/main/docs/schemas/governance-report.schema.json",
+  "title": "HI-OS Governance Report",
+  "description": "Static governance evidence snapshot for HI-OS v0.6 reporting and dashboard export.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "report_id",
+    "generated_at",
+    "repository",
+    "story_summary",
+    "gate_summary",
+    "validation_summary",
+    "release_summary",
+    "friction_summary",
+    "stories"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "artifact_type": {
+      "const": "governance-report"
+    },
+    "report_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "origin"
+      ],
+      "properties": {
+        "origin": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "story_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "implemented",
+        "in_progress",
+        "blocked"
+      ],
+      "properties": {
+        "total": {
+          "$ref": "#/$defs/non_negative_integer"
+        },
+        "implemented": {
+          "$ref": "#/$defs/non_negative_integer"
+        },
+        "in_progress": {
+          "$ref": "#/$defs/non_negative_integer"
+        },
+        "blocked": {
+          "$ref": "#/$defs/non_negative_integer"
+        }
+      }
+    },
+    "gate_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pass",
+        "fail",
+        "not_run"
+      ],
+      "properties": {
+        "pass": {
+          "$ref": "#/$defs/non_negative_integer"
+        },
+        "fail": {
+          "$ref": "#/$defs/non_negative_integer"
+        },
+        "not_run": {
+          "$ref": "#/$defs/non_negative_integer"
+        }
+      }
+    },
+    "validation_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commands"
+      ],
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/validation_command"
+          }
+        }
+      }
+    },
+    "release_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "latest_version",
+        "release_verify_result"
+      ],
+      "properties": {
+        "latest_version": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "release_verify_result": {
+          "enum": [
+            "pass",
+            "fail",
+            "inconclusive",
+            "none"
+          ]
+        },
+        "assets_checked": {
+          "$ref": "#/$defs/non_negative_integer"
+        }
+      }
+    },
+    "friction_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "events",
+        "high_severity",
+        "open_backlog_suggestions",
+        "open_rule_proposals"
+      ],
+      "properties": {
+        "events": {
+          "$ref": "#/$defs/non_negative_integer"
+        },
+        "high_severity": {
+          "$ref": "#/$defs/non_negative_integer"
+        },
+        "open_backlog_suggestions": {
+          "$ref": "#/$defs/non_negative_integer"
+        },
+        "open_rule_proposals": {
+          "$ref": "#/$defs/non_negative_integer"
+        }
+      }
+    },
+    "stories": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/story_row"
+      }
+    }
+  },
+  "$defs": {
+    "non_negative_integer": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "validation_command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "result"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "enum": [
+            "pass",
+            "fail",
+            "inconclusive",
+            "not_run"
+          ]
+        }
+      }
+    },
+    "story_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "story_id",
+        "status",
+        "risk_lane",
+        "proof",
+        "gate_result"
+      ],
+      "properties": {
+        "story_id": {
+          "type": "string",
+          "pattern": "^US-[0-9]{3,}$"
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "risk_lane": {
+          "enum": [
+            "tiny",
+            "normal",
+            "high_risk"
+          ]
+        },
+        "proof": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "unit",
+            "integration",
+            "e2e",
+            "platform"
+          ],
+          "properties": {
+            "unit": {
+              "type": "boolean"
+            },
+            "integration": {
+              "type": "boolean"
+            },
+            "e2e": {
+              "type": "boolean"
+            },
+            "platform": {
+              "type": "boolean"
+            }
+          }
+        },
+        "gate_result": {
+          "enum": [
+            "pass",
+            "fail",
+            "not_run"
+          ]
+        },
+        "missing_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "evidence": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
