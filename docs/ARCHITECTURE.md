@@ -79,6 +79,35 @@ Inner layers must not depend on outer layers.
 | interface | all backend layers | UI state or platform shell assumptions |
 | app surfaces | API contracts and app-facing clients | domain internals directly |
 
+## Automated Architecture Check
+
+Projects encode executable dependency boundaries in
+`harness-architecture.toml`:
+
+```toml
+[[layer]]
+name = "domain"
+path = "src/domain"
+forbidden_imports = ["infrastructure", "interface"]
+
+[[layer]]
+name = "application"
+path = "src/application"
+forbidden_imports = ["interface"]
+```
+
+Use `files = ["domain.rs"]` when logical layers share one directory. The
+scanner reads supported source files, extracts import/include statements, and
+matches forbidden dependencies by complete path segment.
+
+```bash
+scripts/bin/harness-cli arch-check --story US-012
+```
+
+The MVP scanner supports Rust, TypeScript/JavaScript, Python, Go, Java, Kotlin,
+and C# source extensions. It is a deterministic path/import gate, not a
+replacement for a semantic dependency graph.
+
 ## Parse-First Boundary Rule
 
 Unknown data must be parsed at boundaries before it enters inner code.

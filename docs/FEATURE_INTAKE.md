@@ -62,6 +62,11 @@ This automates the following steps:
 2.  **Risk Lane Determination:** Calculates whether the story is `tiny`, `normal`, or `high-risk` based on the detected flags.
 3.  **Context Pack Seeding:** Stores CodeGraph and NotebookLM insights directly inside the SQLite durable database, ready to be packaged by `harness-cli context`.
 
+The MVP JSON reader supports top-level string fields and string arrays only.
+Nested CodeGraph reports are unsupported input rather than complete impact
+evidence. Risk detection uses normalized path segments, so names such as
+`author` do not count as `auth`.
+
 ## Lanes
 
 ### Tiny

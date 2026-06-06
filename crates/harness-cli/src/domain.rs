@@ -468,6 +468,19 @@ pub fn normalize_token(value: &str) -> String {
     normalized
 }
 
+pub fn path_has_any_segment(path: &str, candidates: &[&str]) -> bool {
+    path.split(|character: char| {
+        matches!(character, '/' | '\\' | ':' | '.')
+            || !(character.is_ascii_alphanumeric() || character == '_')
+    })
+    .filter(|segment| !segment.is_empty())
+    .any(|segment| {
+        candidates
+            .iter()
+            .any(|candidate| segment.eq_ignore_ascii_case(candidate))
+    })
+}
+
 pub fn yes_no(value: i64) -> String {
     if value == 1 {
         "yes".to_owned()
@@ -523,6 +536,18 @@ mod tests {
     fn parses_bool_flags() {
         assert_eq!(BoolFlag::parse("--unit", "1").unwrap(), BoolFlag(1));
         assert!(BoolFlag::parse("--unit", "yes").is_err());
+    }
+
+    #[test]
+    fn path_segments_avoid_auth_substring_false_positives() {
+        assert!(path_has_any_segment(
+            r"src\authentication\session.ts",
+            &["auth", "authentication", "login", "session"]
+        ));
+        assert!(!path_has_any_segment(
+            "src/author/profile.ts",
+            &["auth", "authentication", "login", "session"]
+        ));
     }
 
     fn trace_source() -> TraceScoreSource {

@@ -7,9 +7,9 @@ use rusqlite::{params, types::ValueRef, Connection, OptionalExtension};
 use thiserror::Error;
 
 use crate::application::{
-    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, DecisionAddInput,
+    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, ContextPackData, DecisionAddInput,
     DecisionVerifyResult, HarnessContext, InitResult, IntakeInput, MigrateResult, QueryTable,
-    StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput, ContextPackData,
+    StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput,
 };
 use crate::domain::{
     normalize_token, score_trace, ArchitectureCheckResult, ArchitectureConfig,
@@ -19,6 +19,15 @@ use crate::domain::{
 };
 
 pub type Result<T> = std::result::Result<T, HarnessInfraError>;
+type ContextIntakeRow = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 #[derive(Debug, Error)]
 pub enum HarnessInfraError {
@@ -664,8 +673,11 @@ impl HarnessRepository for SqliteHarnessRepository {
         config_path: Option<PathBuf>,
         story_id: Option<&str>,
     ) -> Result<ArchitectureCheckResult> {
-        let config_path =
-            config_path.unwrap_or_else(|| self.repo_root.join("harness-architecture.toml"));
+        let config_path = match config_path {
+            Some(path) if path.is_absolute() => path,
+            Some(path) => self.repo_root.join(path),
+            None => self.repo_root.join("harness-architecture.toml"),
+        };
         if !config_path.is_file() {
             return Err(HarnessInfraError::MissingArchitectureConfig(
                 config_path.display().to_string(),
@@ -1102,7 +1114,7 @@ impl HarnessRepository for SqliteHarnessRepository {
 
     fn get_context_pack_data(&self, story_id: &str) -> Result<ContextPackData> {
         let connection = self.open_existing()?;
-        
+
         let story: (String, String, String, String, Option<String>, Option<String>, Option<String>) = connection
             .query_row(
                 "SELECT id, title, status, risk_lane, contract_doc, verify_command, notes FROM story WHERE id=?1;",
@@ -1122,7 +1134,7 @@ impl HarnessRepository for SqliteHarnessRepository {
             .optional()?
             .ok_or_else(|| HarnessInfraError::StoryNotFound(story_id.to_owned()))?;
 
-        let intake: Option<(String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)> = connection
+        let intake: Option<ContextIntakeRow> = connection
             .query_row(
                 "SELECT input_type, summary, risk_flags, affected_docs, notes, code_impact_summary, grounded_context 
                  FROM intake WHERE story_id=?1 ORDER BY id DESC LIMIT 1;",
@@ -1141,7 +1153,15 @@ impl HarnessRepository for SqliteHarnessRepository {
             )
             .optional()?;
 
-        let (intake_input_type, intake_summary, intake_risk_flags, intake_affected_docs, intake_notes, code_impact_summary, grounded_context) = match intake {
+        let (
+            intake_input_type,
+            intake_summary,
+            intake_risk_flags,
+            intake_affected_docs,
+            intake_notes,
+            code_impact_summary,
+            grounded_context,
+        ) = match intake {
             Some(i) => (Some(i.0), Some(i.1), i.2, i.3, i.4, i.5, i.6),
             None => (None, None, None, None, None, None, None),
         };
@@ -1331,28 +1351,39 @@ fn source_imports(content: &str) -> Vec<String> {
 
 fn source_import(line: &str) -> Option<String> {
     let trimmed = line.trim();
-    let import_like = trimmed.starts_with("use ")
-        || trimmed.starts_with("pub use ")
-        || trimmed.starts_with("import ")
-        || trimmed.starts_with("from ")
-        || trimmed.starts_with("#include")
-        || trimmed.contains("require(");
-    if !import_like {
-        return None;
+    if let Some(require_index) = trimmed.find("require(") {
+        return clean_import_target(&trimmed[require_index + "require(".len()..]);
     }
+    if let Some(value) = trimmed.strip_prefix("#include") {
+        return clean_import_target(value);
+    }
+    if let Some(value) = trimmed
+        .strip_prefix("pub use ")
+        .or_else(|| trimmed.strip_prefix("use "))
+    {
+        return Some(value.trim_end_matches(';').trim().to_owned());
+    }
+    if let Some(value) = trimmed.strip_prefix("from ") {
+        return value.split_whitespace().next().map(str::to_owned);
+    }
+    if let Some(value) = trimmed.strip_prefix("import ") {
+        if let Some((_, module)) = value.rsplit_once(" from ") {
+            return clean_import_target(module);
+        }
+        return clean_import_target(value);
+    }
+    None
+}
 
-    let normalized = trimmed
-        .replace("pub use ", "")
-        .replace("use ", "")
-        .replace("import ", "")
-        .replace("from ", "")
-        .replace("#include", "")
-        .replace("require(", "")
-        .replace(['"', '\'', '<', '>', ';', ')'], " ");
-    normalized
+fn clean_import_target(value: &str) -> Option<String> {
+    let target = value
+        .trim()
+        .trim_matches(|character| matches!(character, '"' | '\'' | '<' | '>' | ';' | ')' | '('))
         .split_whitespace()
         .next()
-        .map(|value| value.to_owned())
+        .unwrap_or("")
+        .trim_matches(|character| matches!(character, '"' | '\'' | '<' | '>' | ';' | ')' | '('));
+    (!target.is_empty()).then(|| target.to_owned())
 }
 
 fn import_matches_path(import: &str, forbidden: &str) -> bool {
@@ -1626,15 +1657,17 @@ mod tests {
         assert_eq!(repository.query_stats().unwrap().intakes, 0);
         let connection = repository.open_existing().unwrap();
         let schema_version = SqliteHarnessRepository::schema_version(&connection).unwrap();
-        assert_eq!(schema_version, 2);
+        assert_eq!(schema_version, 4);
         let story_columns = story_columns(&connection);
         assert!(story_columns.contains(&"verify_command".to_owned()));
         assert!(story_columns.contains(&"last_verified_at".to_owned()));
         assert!(story_columns.contains(&"last_verified_result".to_owned()));
+        assert!(story_columns.contains(&"arch_check_result".to_owned()));
+        assert!(story_columns.contains(&"gate_result".to_owned()));
     }
 
     #[test]
-    fn migrate_applies_story_verify_columns_to_existing_database() {
+    fn migrate_applies_all_pending_columns_to_existing_database() {
         let (_temp_dir, repository) = test_repository();
         let connection = repository.open_or_create().unwrap();
         repository.apply_schema_v1(&connection).unwrap();
@@ -1643,16 +1676,18 @@ mod tests {
         let result = repository.migrate().unwrap();
 
         assert_eq!(result.current_version, 1);
-        assert_eq!(result.applied, vec![2]);
+        assert_eq!(result.applied, vec![2, 3, 4]);
         let connection = repository.open_existing().unwrap();
         assert_eq!(
             SqliteHarnessRepository::schema_version(&connection).unwrap(),
-            2
+            4
         );
         let story_columns = story_columns(&connection);
         assert!(story_columns.contains(&"verify_command".to_owned()));
         assert!(story_columns.contains(&"last_verified_at".to_owned()));
         assert!(story_columns.contains(&"last_verified_result".to_owned()));
+        assert!(story_columns.contains(&"context_pack_path".to_owned()));
+        assert!(story_columns.contains(&"gate_result".to_owned()));
     }
 
     #[test]
@@ -1669,6 +1704,9 @@ mod tests {
                 affected_docs: CsvList::from_optional(None),
                 story_id: Some("US-002".to_owned()),
                 notes: None,
+                code_impact_summary: None,
+                grounded_context: None,
+                auto_generated: false,
             })
             .unwrap();
 
@@ -1963,6 +2001,9 @@ mod tests {
                 affected_docs: CsvList::from_optional(None),
                 story_id: None,
                 notes: None,
+                code_impact_summary: None,
+                grounded_context: None,
+                auto_generated: false,
             })
             .unwrap();
         repository
@@ -2225,6 +2266,9 @@ implemented
                 affected_docs: CsvList::from_optional(None),
                 story_id: None,
                 notes: None,
+                code_impact_summary: None,
+                grounded_context: None,
+                auto_generated: false,
             })
             .unwrap();
         let first_trace = repository
@@ -2280,5 +2324,172 @@ implemented
         assert_eq!(specific.achieved, TraceQualityTier::Minimal);
         assert_eq!(specific.required, None);
         assert!(specific.meets_requirement);
+    }
+
+    #[test]
+    fn architecture_check_reports_segment_matched_imports_and_ignores_author_names() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_root = temp_dir.path().join("repo");
+        fs::create_dir_all(repo_root.join("src/domain")).unwrap();
+        fs::write(
+            repo_root.join("src/domain/user.rs"),
+            "use crate::infrastructure::db;\nuse crate::author::profile;\n",
+        )
+        .unwrap();
+        fs::write(
+            repo_root.join("harness-architecture.toml"),
+            r#"
+[[layer]]
+name = "domain"
+path = "src/domain"
+forbidden_imports = ["infrastructure", "auth"]
+"#,
+        )
+        .unwrap();
+        let schema_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap()
+            .join("scripts/schema");
+        let repository = SqliteHarnessRepository::new(
+            repo_root,
+            temp_dir.path().join("harness.db"),
+            schema_root,
+        );
+
+        let result = repository.check_architecture(None, None).unwrap();
+
+        assert!(!result.passed);
+        assert_eq!(result.scanned_files, 1);
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].import, "crate::infrastructure::db");
+    }
+
+    #[test]
+    fn source_import_extracts_common_language_forms() {
+        assert_eq!(
+            source_import(r#"import { db } from "./infrastructure/db";"#).as_deref(),
+            Some("./infrastructure/db")
+        );
+        assert_eq!(
+            source_import("from infrastructure.db import connect").as_deref(),
+            Some("infrastructure.db")
+        );
+        assert_eq!(
+            source_import(r#"const db = require("./infrastructure/db");"#).as_deref(),
+            Some("./infrastructure/db")
+        );
+        assert_eq!(
+            source_import("use crate::{domain::User, infrastructure::Db};").as_deref(),
+            Some("crate::{domain::User, infrastructure::Db}")
+        );
+    }
+
+    #[test]
+    fn story_gate_requires_governance_evidence_and_passes_when_complete() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_root = temp_dir.path().join("repo");
+        fs::create_dir_all(repo_root.join(".harness/context")).unwrap();
+        fs::write(
+            repo_root.join("harness-architecture.toml"),
+            r#"
+[[layer]]
+name = "domain"
+path = "src/domain"
+forbidden_imports = ["infrastructure"]
+"#,
+        )
+        .unwrap();
+        let schema_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap()
+            .join("scripts/schema");
+        let repository = SqliteHarnessRepository::new(
+            repo_root.clone(),
+            temp_dir.path().join("harness.db"),
+            schema_root,
+        );
+        repository.init().unwrap();
+        repository
+            .add_story(StoryAddInput {
+                id: "US-GATE".to_owned(),
+                title: "Governance gate".to_owned(),
+                risk_lane: RiskLane::HighRisk,
+                contract_doc: None,
+                verify_command: Some("exit 0".to_owned()),
+                notes: None,
+            })
+            .unwrap();
+
+        let incomplete = repository.verify_story_gate("US-GATE").unwrap();
+        assert!(!incomplete.passed);
+        assert!(incomplete.missing.contains(&"intake".to_owned()));
+        assert!(incomplete.missing.contains(&"context pack".to_owned()));
+        assert!(incomplete
+            .missing
+            .contains(&"architecture check result".to_owned()));
+        assert!(incomplete.missing.contains(&"validation proof".to_owned()));
+        assert!(incomplete.missing.contains(&"trace".to_owned()));
+
+        repository
+            .record_intake(IntakeInput {
+                input_type: InputType::HarnessImprovement,
+                summary: "Complete governance gate evidence".to_owned(),
+                risk_lane: RiskLane::HighRisk,
+                risk_flags: CsvList::from_optional(Some("architecture".to_owned())),
+                affected_docs: CsvList::from_optional(None),
+                story_id: Some("US-GATE".to_owned()),
+                notes: None,
+                code_impact_summary: Some("{\"affected_files\":[]}".to_owned()),
+                grounded_context: None,
+                auto_generated: true,
+            })
+            .unwrap();
+        fs::write(
+            repo_root.join(".harness/context/US-GATE-context.md"),
+            "# Context",
+        )
+        .unwrap();
+        repository
+            .update_story_context_pack_path("US-GATE", ".harness/context/US-GATE-context.md")
+            .unwrap();
+        repository
+            .check_architecture(None, Some("US-GATE"))
+            .unwrap();
+        repository.verify_story("US-GATE").unwrap();
+        repository
+            .update_story(StoryUpdateInput {
+                id: "US-GATE".to_owned(),
+                status: Some("implemented".to_owned()),
+                evidence: Some("cargo test --workspace".to_owned()),
+                unit: Some(BoolFlag(1)),
+                integration: None,
+                e2e: None,
+                platform: None,
+                verify_command: None,
+            })
+            .unwrap();
+        repository
+            .record_trace(TraceInput {
+                task_summary: "Completed governance gate evidence".to_owned(),
+                intake_id: None,
+                story_id: Some("US-GATE".to_owned()),
+                agent: Some("test".to_owned()),
+                outcome: Some("completed".to_owned()),
+                duration_seconds: None,
+                token_estimate: None,
+                friction: Some("none".to_owned()),
+                notes: None,
+                actions: CsvList::from_optional(Some("verify".to_owned())),
+                files_read: CsvList::from_optional(Some("story".to_owned())),
+                files_changed: CsvList::from_optional(Some("proof".to_owned())),
+                decisions: CsvList::from_optional(Some("gate".to_owned())),
+                errors: CsvList::from_optional(Some("none".to_owned())),
+            })
+            .unwrap();
+
+        let complete = repository.verify_story_gate("US-GATE").unwrap();
+        assert!(complete.passed, "{:?}", complete.missing);
     }
 }

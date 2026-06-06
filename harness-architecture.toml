@@ -1,11 +1,21 @@
 [[layer]]
 name = "domain"
+path = "src/domain"
+forbidden_imports = ["infrastructure", "interface"]
+
+[[layer]]
+name = "application"
+path = "src/application"
+forbidden_imports = ["interface"]
+
+[[layer]]
+name = "harness-cli domain"
 path = "crates/harness-cli/src"
 files = ["domain.rs"]
 forbidden_imports = ["application", "infrastructure", "interface"]
 
 [[layer]]
-name = "application"
+name = "harness-cli application"
 path = "crates/harness-cli/src"
 files = ["application.rs"]
 forbidden_imports = ["interface"]

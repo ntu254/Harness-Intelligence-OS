@@ -11,9 +11,9 @@ use crate::application::{
     StoryUpdateInput, TraceInput,
 };
 use crate::domain::{
-    parse_optional_integer, proof_display, BacklogFilter, BacklogRecord, BoolFlag, CsvList,
-    DecisionRecord, FrictionRecord, HarnessStats, InputType, IntakeRecord, RiskLane,
-    StoryMatrixRecord, TraceQualityTier, TraceRecord, TraceScoreResult, RISK_LANE_HELP,
+    parse_optional_integer, path_has_any_segment, proof_display, BacklogFilter, BacklogRecord,
+    BoolFlag, CsvList, DecisionRecord, FrictionRecord, HarnessStats, InputType, IntakeRecord,
+    RiskLane, StoryMatrixRecord, TraceQualityTier, TraceRecord, TraceScoreResult, RISK_LANE_HELP,
 };
 
 #[derive(Parser, Debug)]
@@ -105,7 +105,7 @@ enum StoryAction {
     )]
     Update(StoryUpdateArgs),
     #[command(
-        after_help = "story verify only accepts the story id. Configure proof with story add/update --verify, then record proof flags with story update."
+        after_help = "story verify runs the configured proof command, then enforces the governance gate. Record intake, context, architecture, proof, and trace evidence first."
     )]
     Verify {
         /// Story id to verify.
@@ -329,6 +329,10 @@ pub enum InterfaceError {
     CurrentDir(std::io::Error),
     #[error("query sql requires a SQL statement")]
     EmptySql,
+    #[error(
+        "impact report must be a JSON object with top-level string fields and string arrays: {0}"
+    )]
+    InvalidImpactReport(String),
 }
 
 pub fn run(cli: Cli) -> Result<(), InterfaceError> {
@@ -363,47 +367,63 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
 
                 if let Some(json) = &report_content {
                     code_impact_summary = Some(json.clone());
-                    
+                    let report = parse_impact_report(json)?;
+
                     if lane_str.is_none() {
-                        if let Some(lane_val) = extract_json_field(json, "lane") {
+                        if let Some(lane_val) = report.lane {
                             lane_str = Some(lane_val);
                         }
                     }
 
-                    if let Some(flags_val) = extract_json_array(json, "risk_flags") {
-                        flags.extend(flags_val);
+                    for flag in report.risk_flags {
+                        let flag = crate::domain::normalize_token(&flag);
+                        if !flag.is_empty() && !flags.contains(&flag) {
+                            flags.push(flag);
+                        }
                     }
 
-                    let affected_files = extract_json_array(json, "affected_files");
-                    if let Some(files) = affected_files {
-                        for file in files {
-                            let file_lower = file.to_lowercase();
-                            if file_lower.contains("auth") || file_lower.contains("login") || file_lower.contains("session") || file_lower.contains("jwt") {
-                                if !flags.contains(&"auth".to_owned()) {
-                                    flags.push("auth".to_owned());
-                                }
-                                if !flags.contains(&"authorization".to_owned()) {
-                                    flags.push("authorization".to_owned());
-                                }
+                    for file in report.affected_files {
+                        let file_lower = file.to_lowercase();
+                        if path_has_any_segment(
+                            &file_lower,
+                            &["auth", "authentication", "login", "session", "jwt"],
+                        ) {
+                            if !flags.contains(&"auth".to_owned()) {
+                                flags.push("auth".to_owned());
                             }
-                            if file_lower.contains("db") || file_lower.contains("migration") || file_lower.contains("schema") || file_lower.contains("sql") || file_lower.contains("prisma") {
-                                if !flags.contains(&"data_model".to_owned()) {
-                                    flags.push("data_model".to_owned());
-                                }
+                            if !flags.contains(&"authorization".to_owned()) {
+                                flags.push("authorization".to_owned());
                             }
-                            if file_lower.contains("route") || file_lower.contains("controller") || file_lower.contains("dto") || file_lower.contains("api") {
-                                if !flags.contains(&"public_contracts".to_owned()) {
-                                    flags.push("public_contracts".to_owned());
-                                }
-                            }
-                            if file_lower.contains("audit") || file_lower.contains("security") || file_lower.contains("privacy") {
-                                if !flags.contains(&"audit_security".to_owned()) {
-                                    flags.push("audit_security".to_owned());
-                                }
-                            }
-                            if file_lower.ends_with(".md") && file_lower.contains("docs/") {
-                                affected_docs.push(file);
-                            }
+                        }
+                        if path_has_any_segment(
+                            &file_lower,
+                            &[
+                                "db",
+                                "database",
+                                "migration",
+                                "migrations",
+                                "schema",
+                                "sql",
+                                "prisma",
+                            ],
+                        ) && !flags.contains(&"data_model".to_owned())
+                        {
+                            flags.push("data_model".to_owned());
+                        }
+                        if path_has_any_segment(
+                            &file_lower,
+                            &["route", "routes", "controller", "controllers", "dto", "api"],
+                        ) && !flags.contains(&"public_contracts".to_owned())
+                        {
+                            flags.push("public_contracts".to_owned());
+                        }
+                        if path_has_any_segment(&file_lower, &["audit", "security", "privacy"])
+                            && !flags.contains(&"audit_security".to_owned())
+                        {
+                            flags.push("audit_security".to_owned());
+                        }
+                        if file_lower.ends_with(".md") && file_lower.contains("docs/") {
+                            affected_docs.push(file);
                         }
                     }
                 }
@@ -443,20 +463,20 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
             }
 
             let input_type_val = input_type_str.ok_or_else(|| {
-                InterfaceError::ParseHarnessValue(
-                    crate::domain::ParseHarnessValueError::InputType("missing input type".to_owned())
-                )
+                InterfaceError::ParseHarnessValue(crate::domain::ParseHarnessValueError::InputType(
+                    "missing input type".to_owned(),
+                ))
             })?;
             let lane_val = lane_str.ok_or_else(|| {
-                InterfaceError::ParseHarnessValue(
-                    crate::domain::ParseHarnessValueError::RiskLane("missing risk lane".to_owned())
-                )
+                InterfaceError::ParseHarnessValue(crate::domain::ParseHarnessValueError::RiskLane(
+                    "missing risk lane".to_owned(),
+                ))
             })?;
 
             let merged_flags = if let Some(user_flags) = &args.flags {
                 let mut f = flags.clone();
                 for flag in user_flags.split(',') {
-                    let flag = flag.trim().to_owned();
+                    let flag = crate::domain::normalize_token(flag);
                     if !flag.is_empty() && !f.contains(&flag) {
                         f.push(flag);
                     }
@@ -1039,46 +1059,58 @@ fn print_row(values: &[String], widths: &[usize]) {
     println!();
 }
 
-fn extract_json_field(json: &str, field: &str) -> Option<String> {
-    let target = format!("\"{}\"", field);
-    if let Some(pos) = json.find(&target) {
-        let after_field = &json[pos + target.len()..];
-        if let Some(colon_pos) = after_field.find(':') {
-            let after_colon = &after_field[colon_pos + 1..];
-            if let Some(quote_start) = after_colon.find('"') {
-                let after_quote = &after_colon[quote_start + 1..];
-                if let Some(quote_end) = after_quote.find('"') {
-                    return Some(after_quote[..quote_end].to_owned());
-                }
-            }
-        }
-    }
-    None
+#[derive(Debug, PartialEq, Eq)]
+struct ImpactReport {
+    lane: Option<String>,
+    risk_flags: Vec<String>,
+    affected_files: Vec<String>,
 }
 
-fn extract_json_array(json: &str, field: &str) -> Option<Vec<String>> {
-    let target = format!("\"{}\"", field);
-    if let Some(pos) = json.find(&target) {
-        let after_field = &json[pos + target.len()..];
-        if let Some(colon_pos) = after_field.find(':') {
-            let after_colon = &after_field[colon_pos + 1..];
-            if let Some(bracket_start) = after_colon.find('[') {
-                let after_bracket = &after_colon[bracket_start + 1..];
-                if let Some(bracket_end) = after_bracket.find(']') {
-                    let array_content = &after_bracket[..bracket_end];
-                    let mut items = Vec::new();
-                    for item in array_content.split(',') {
-                        let clean = item.trim().trim_matches('"').trim().to_owned();
-                        if !clean.is_empty() {
-                            items.push(clean);
-                        }
-                    }
-                    return Some(items);
-                }
-            }
-        }
+fn parse_impact_report(json: &str) -> Result<ImpactReport, InterfaceError> {
+    let value = serde_json::from_str::<serde_json::Value>(json)
+        .map_err(|error| InterfaceError::InvalidImpactReport(error.to_string()))?;
+    let object = value.as_object().ok_or_else(|| {
+        InterfaceError::InvalidImpactReport("top-level value is not an object".to_owned())
+    })?;
+
+    Ok(ImpactReport {
+        lane: optional_string_field(object, "lane")?,
+        risk_flags: string_array_field(object, "risk_flags")?,
+        affected_files: string_array_field(object, "affected_files")?,
+    })
+}
+
+fn optional_string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<Option<String>, InterfaceError> {
+    match object.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(InterfaceError::InvalidImpactReport(format!(
+            "'{field}' must be a string"
+        ))),
     }
-    None
+}
+
+fn string_array_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<Vec<String>, InterfaceError> {
+    let Some(value) = object.get(field) else {
+        return Ok(Vec::new());
+    };
+    let array = value.as_array().ok_or_else(|| {
+        InterfaceError::InvalidImpactReport(format!("'{field}' must be a string array"))
+    })?;
+    array
+        .iter()
+        .map(|item| {
+            item.as_str().map(str::to_owned).ok_or_else(|| {
+                InterfaceError::InvalidImpactReport(format!("'{field}' must contain only strings"))
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1110,8 +1142,8 @@ mod tests {
             .unwrap()
             .render_long_help()
             .to_string();
-        assert!(verify_help.contains("story verify only accepts the story id"));
-        assert!(verify_help.contains("Configure proof with story add/update --verify"));
+        assert!(verify_help.contains("enforces the governance gate"));
+        assert!(verify_help.contains("Record intake, context, architecture"));
     }
 
     #[test]
@@ -1154,5 +1186,25 @@ mod tests {
             .render_long_help()
             .to_string();
         assert!(matrix_help.contains("--numeric"));
+    }
+
+    #[test]
+    fn impact_report_parser_handles_missing_empty_and_nested_fields() {
+        assert_eq!(
+            parse_impact_report(r#"{"risk_flags":[]}"#).unwrap(),
+            ImpactReport {
+                lane: None,
+                risk_flags: Vec::new(),
+                affected_files: Vec::new(),
+            }
+        );
+        assert_eq!(
+            parse_impact_report(r#"{"report":{"affected_files":["src/auth/login.ts"]}}"#)
+                .unwrap()
+                .affected_files,
+            Vec::<String>::new()
+        );
+        assert!(parse_impact_report("{not json").is_err());
+        assert!(parse_impact_report(r#"{"affected_files":"src/auth/login.ts"}"#).is_err());
     }
 }

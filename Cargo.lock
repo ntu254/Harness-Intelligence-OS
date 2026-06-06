@@ -199,11 +199,12 @@ dependencies = [
 
 [[package]]
 name = "harness-cli"
-version = "0.1.8"
+version = "0.2.0"
 dependencies = [
  "clap",
  "rusqlite",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
  "toml",

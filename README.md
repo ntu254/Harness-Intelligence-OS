@@ -2,6 +2,20 @@
 
 Turn any software repo into an agent-ready workspace.
 
+## Harness Intelligence OS
+
+Harness Intelligence OS extends `repository-harness` with an intelligence and
+governance layer for AI coding agents. It combines:
+
+- CodeGraph-style impact reports for code-aware risk analysis.
+- Grounded business context for product-aware planning.
+- Harness CLI controls for risk laning, context packs, architecture checks,
+  validation gates, and traceability.
+
+The goal is to prevent agents from editing or handing off code before they
+understand the product context, affected code areas, architecture constraints,
+and required validation proof.
+
 `repository-harness` is a repository-level operating harness for Claude Code,
 Codex, Cursor, and other coding agents. It gives agents the missing project
 context they need before they change code: where to start, what the product

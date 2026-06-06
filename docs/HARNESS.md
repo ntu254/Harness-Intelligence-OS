@@ -108,6 +108,7 @@ Common commands:
 scripts/bin/harness-cli intake  --type <type> --summary <text> --lane <lane>
 scripts/bin/harness-cli intake  --summary <text> --story <id> --auto --impact-report <report> --business-context <context>
 scripts/bin/harness-cli context --story <id>
+scripts/bin/harness-cli arch-check --story <id>
 scripts/bin/harness-cli story   add --id <id> --title <text> --lane <lane>
 scripts/bin/harness-cli story   update --id <id> --status <status>
 scripts/bin/harness-cli story   update --id <id> --unit 1 --integration 1 --e2e 0 --platform 0
@@ -249,12 +250,27 @@ scripts/bin/harness-cli story update --id US-012 --verify "cargo test --workspac
 scripts/bin/harness-cli story verify US-012
 ```
 
-`story verify` runs the command from the repository root, records
-`last_verified_at` and `last_verified_result`, and exits 0 on pass or 1 on fail.
+`story verify` first runs the command from the repository root and records
+`last_verified_at` and `last_verified_result`. It then evaluates the story
+governance gate. The command exits 0 only when both stages pass.
+
+The governance gate requires a linked intake, generated context pack, passing
+architecture result, passing mechanical verification, code impact evidence for
+automated intake, a linked trace, and high-risk validation evidence when
+applicable.
+
+Run the final gate after recording the task trace:
+
+```bash
+scripts/bin/harness-cli arch-check --story US-012
+scripts/bin/harness-cli trace --story US-012 ...
+scripts/bin/harness-cli story verify US-012
+```
+
 When `trace --story <id>` links to a story whose verification command has never
 passed, the trace still records but prints an advisory warning before close.
 
-`story verify` accepts only the story id. Configure the command with
+`story verify` accepts only the story id. Configure the mechanical command with
 `story add --verify` or `story update --verify`. Record proof booleans with
 `story update`, using numeric values: `1` means yes and `0` means no. The Rust
 CLI rejects text values such as `yes` and `no`.

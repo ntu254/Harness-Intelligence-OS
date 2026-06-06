@@ -158,10 +158,7 @@ impl HarnessService {
         self.repository.verify_story(id)
     }
 
-    pub fn verify_story_gate(
-        &self,
-        id: &str,
-    ) -> crate::infrastructure::Result<StoryGateResult> {
+    pub fn verify_story_gate(&self, id: &str) -> crate::infrastructure::Result<StoryGateResult> {
         self.repository.verify_story_gate(id)
     }
 
@@ -241,12 +238,12 @@ impl HarnessService {
 
     pub fn generate_context_pack(&self, story_id: &str) -> crate::infrastructure::Result<PathBuf> {
         let data = self.repository.get_context_pack_data(story_id)?;
-        
+
         let context_dir = self.repository.repo_root().join(".harness/context");
         std::fs::create_dir_all(&context_dir)?;
-        
+
         let filepath = context_dir.join(format!("{}-context.md", story_id));
-        
+
         let mut markdown = String::new();
         markdown.push_str(&format!("# Context Pack for Story {}\n\n", data.story_id));
         markdown.push_str("## 1. Story Overview\n");
@@ -254,7 +251,15 @@ impl HarnessService {
         markdown.push_str(&format!("*   **Status:** {}\n", data.story_status));
         markdown.push_str(&format!("*   **Risk Lane:** {}\n", data.story_risk_lane));
         if let Some(doc) = &data.story_contract_doc {
-            markdown.push_str(&format!("*   **Product Contract:** [{doc}](file:///{})\n", self.repository.repo_root().join(doc).display().to_string().replace('\\', "/")));
+            markdown.push_str(&format!(
+                "*   **Product Contract:** [{doc}](file:///{})\n",
+                self.repository
+                    .repo_root()
+                    .join(doc)
+                    .display()
+                    .to_string()
+                    .replace('\\', "/")
+            ));
         }
         if let Some(cmd) = &data.story_verify_command {
             markdown.push_str(&format!("*   **Verify Command:** `{}`\n", cmd));
@@ -262,8 +267,8 @@ impl HarnessService {
         if let Some(notes) = &data.story_notes {
             markdown.push_str(&format!("*   **Notes:** {}\n", notes));
         }
-        markdown.push_str("\n");
-        
+        markdown.push('\n');
+
         markdown.push_str("## 2. Intake Information\n");
         if let Some(input_type) = &data.intake_input_type {
             markdown.push_str(&format!("*   **Input Type:** {}\n", input_type));
@@ -280,32 +285,40 @@ impl HarnessService {
         if let Some(notes) = &data.intake_notes {
             markdown.push_str(&format!("*   **Intake Notes:** {}\n", notes));
         }
-        markdown.push_str("\n");
-        
+        markdown.push('\n');
+
         markdown.push_str("## 3. CodeGraph Impact Analysis\n");
         if let Some(impact) = &data.code_impact_summary {
             markdown.push_str(&format!("{}\n", impact));
         } else {
             markdown.push_str("*No CodeGraph impact data available.*\n");
         }
-        markdown.push_str("\n");
-        
+        markdown.push('\n');
+
         markdown.push_str("## 4. NotebookLM Grounded Context\n");
         if let Some(context) = &data.grounded_context {
             markdown.push_str(&format!("{}\n", context));
         } else {
             markdown.push_str("*No NotebookLM grounded context available.*\n");
         }
-        markdown.push_str("\n");
-        
+        markdown.push('\n');
+
         markdown.push_str("## 5. Architecture Constraints (docs/ARCHITECTURE.md)\n");
-        markdown.push_str("*   Lớp inner không được phụ thuộc vào lớp outer (Domain <- Application <- Infrastructure <- Interface).\n");
-        markdown.push_str("*   Mọi dữ liệu từ ngoài vào biên phải được parse trước (Parse-First Boundary Rule).\n");
-        
+        markdown.push_str(
+            "*   Inner layers must not depend on outer layers \
+             (Domain <- Application <- Infrastructure <- Interface).\n",
+        );
+        markdown.push_str(
+            "*   Unknown data must be parsed at boundaries before entering inner code.\n",
+        );
+
         std::fs::write(&filepath, markdown)?;
-        
-        self.repository.update_story_context_pack_path(story_id, &format!(".harness/context/{}-context.md", story_id))?;
-        
+
+        self.repository.update_story_context_pack_path(
+            story_id,
+            &format!(".harness/context/{}-context.md", story_id),
+        )?;
+
         Ok(filepath)
     }
 }

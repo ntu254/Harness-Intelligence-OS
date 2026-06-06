@@ -98,6 +98,7 @@ Read to leave useful evidence for the next agent and for benchmark scoring.
 | Task is normal or high-risk and spans multiple iterations | Create or update a story/progress file under `docs/stories/` and keep it current. |
 | Task is normal or high-risk and has a context pack | Read `.harness/context/US-XXX-context.md` instead of full repo files during planning/implementation. |
 | Final response is being prepared | Re-read the validation evidence, `git status --short`, and `docs/TRACE_SPEC.md` before recording the final trace. |
+| Story handoff is being prepared | Run `arch-check --story <id>`, record the trace, then run the final `story verify <id>` governance gate. |
 
 ## Token Budget Guidance
 

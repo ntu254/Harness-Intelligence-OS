@@ -13,7 +13,8 @@ scripts/bin/harness-cli init          # Create the database
 scripts/bin/harness-cli intake ...    # Record a feature intake classification
 scripts/bin/harness-cli story ...     # Add or update a story (test matrix row)
 scripts/bin/harness-cli story update --id US-001 --unit 1 --integration 1 --e2e 0 --platform 0
-scripts/bin/harness-cli story verify US-001  # Run the story's verify_command
+scripts/bin/harness-cli arch-check --story US-001
+scripts/bin/harness-cli story verify US-001  # Run proof command and governance gate
 scripts/bin/harness-cli decision ...  # Add a decision or run its verification
 scripts/bin/harness-cli backlog ...   # Add or close a backlog item
 scripts/bin/harness-cli trace ...     # Record and auto-score an agent execution trace
@@ -29,9 +30,10 @@ full usage. On Windows, use the same commands through
 `.\scripts\bin\harness-cli.exe`.
 
 Proof flags on `story update` are numeric booleans: use `1` for yes and `0` for
-no. `story verify <id>` runs the configured `verify_command`; it does not accept
-proof flags. Configure the command with `story add/update --verify`, run
-`story verify <id>`, then update proof flags with `story update`.
+no. `arch-check --story <id>` scans `harness-architecture.toml` and stores the
+result on the story. `story verify <id>` runs the configured `verify_command`
+and then enforces the governance gate. Record proof flags, architecture proof,
+context, and the linked trace before the final verify.
 
 Backlog `--risk` uses Harness lanes, not severity words: use `tiny`, `normal`,
 or `high-risk`. Use `tiny` instead of `low`. `query matrix` defaults to
@@ -59,6 +61,7 @@ scripts/bin/harness-cli intake ...
 scripts/bin/harness-cli story add ...
 scripts/bin/harness-cli story update ...
 scripts/bin/harness-cli story verify ...
+scripts/bin/harness-cli arch-check ...
 scripts/bin/harness-cli decision add ...
 scripts/bin/harness-cli decision verify ...
 scripts/bin/harness-cli backlog add ...
@@ -135,9 +138,10 @@ By default the installer also downloads the prebuilt Rust Harness CLI for the
 current platform into `scripts/bin/harness-cli` on macOS/Linux or
 `scripts/bin/harness-cli.exe` on Windows, then verifies its `.sha256` checksum.
 A source branch can pin the release used by the installer through
-`scripts/harness-cli-release-tag`; Phase 3 pins `harness-cli-v0.1.4` so branch
-installs receive a Phase 3-built CLI. Set `HARNESS_CLI_RELEASE_TAG` to override
-that tag, or set `HARNESS_CLI_BASE_URL` to point at an alternate artifact
+`scripts/harness-cli-release-tag`; HI-OS v0.2 pins `harness-cli-v0.2.0` so
+branch installs receive the verification-gate CLI. Set
+`HARNESS_CLI_RELEASE_TAG` to override that tag, or set
+`HARNESS_CLI_BASE_URL` to point at an alternate artifact
 directory, such as a local `file:///.../dist` directory created by
 `scripts/build-harness-cli-release.sh`.
 

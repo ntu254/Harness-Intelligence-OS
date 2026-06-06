@@ -835,6 +835,7 @@ docs/decisions/0003-generic-spec-intake-harness.md
 docs/decisions/0004-sqlite-durable-layer.md
 docs/decisions/0005-prebuilt-rust-harness-cli.md
 docs/decisions/0006-phase-4-benchmark-triage.md
+docs/decisions/0007-hi-os-verification-gate.md
 docs/decisions/README.md
 docs/product/README.md
 docs/stories/README.md
@@ -850,6 +851,9 @@ docs/templates/high-risk-story/validation.md
 scripts/README.md
 scripts/schema/001-init.sql
 scripts/schema/002-story-verify.sql
+scripts/schema/003-hi-os.sql
+scripts/schema/004-verification-gate.sql
+harness-architecture.toml
 .gitignore
 EOF
 
