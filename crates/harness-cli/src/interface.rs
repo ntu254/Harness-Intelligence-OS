@@ -7,13 +7,14 @@ use thiserror::Error;
 
 use crate::application::{
     BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, DecisionAddInput, HarnessContext,
-    HarnessService, InitResult, IntakeInput, MigrateResult, QueryTable, StoryAddInput,
-    StoryUpdateInput, TraceInput,
+    HarnessService, InitResult, IntakeInput, MigrateResult, QueryTable, ReleaseVerifyInput,
+    StoryAddInput, StoryUpdateInput, TraceInput,
 };
 use crate::domain::{
     parse_optional_integer, path_has_any_segment, proof_display, BacklogFilter, BacklogRecord,
     BoolFlag, CsvList, DecisionRecord, FrictionRecord, HarnessStats, InputType, IntakeRecord,
-    RiskLane, StoryMatrixRecord, TraceQualityTier, TraceRecord, TraceScoreResult, RISK_LANE_HELP,
+    ReleaseCheckResult, RiskLane, StoryMatrixRecord, TraceQualityTier, TraceRecord,
+    TraceScoreResult, RISK_LANE_HELP,
 };
 
 #[derive(Parser, Debug)]
@@ -51,6 +52,8 @@ enum Command {
     Context(ContextArgs),
     /// Check configured architecture dependency boundaries.
     ArchCheck(ArchCheckArgs),
+    /// Verify the trusted public release distribution chain.
+    Release(ReleaseArgs),
 }
 
 #[derive(Args, Debug)]
@@ -127,6 +130,8 @@ struct StoryAddArgs {
     verify: Option<String>,
     #[arg(long)]
     notes: Option<String>,
+    #[arg(long = "release-proof", value_name = "0|1", default_value = "0")]
+    release_proof: String,
 }
 
 #[derive(Args, Debug)]
@@ -147,6 +152,34 @@ struct StoryUpdateArgs {
     platform: Option<String>,
     #[arg(long)]
     verify: Option<String>,
+    #[arg(long = "release-proof", value_name = "0|1")]
+    release_proof: Option<String>,
+}
+
+#[derive(Args, Debug)]
+struct ReleaseArgs {
+    #[command(subcommand)]
+    action: ReleaseAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum ReleaseAction {
+    /// Verify public assets, checksum, binary version, and smoke execution.
+    Verify(ReleaseVerifyArgs),
+}
+
+#[derive(Args, Debug)]
+struct ReleaseVerifyArgs {
+    #[arg(long)]
+    version: String,
+    #[arg(long)]
+    origin: Option<String>,
+    #[arg(long)]
+    platform: Option<String>,
+    #[arg(long)]
+    output: Option<PathBuf>,
+    #[arg(long)]
+    story: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -535,6 +568,33 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                 std::process::exit(1);
             }
         }
+        Command::Release(args) => match args.action {
+            ReleaseAction::Verify(args) => {
+                let (path, report) = service.verify_release(ReleaseVerifyInput {
+                    version: args.version,
+                    origin: args.origin,
+                    platform: args.platform,
+                    output: args.output,
+                    story_id: args.story,
+                })?;
+                println!("Release tag: {}", report.tag);
+                println!("Origin: {}", report.origin);
+                println!("Platform: {}", report.platform);
+                println!("Assets checked: {}", report.assets_checked);
+                println!("Download: {}", report.download.as_db_value());
+                println!("Checksum: {}", report.checksum.as_db_value());
+                println!("Version: {}", report.version_check.as_db_value());
+                println!("Smoke install: {}", report.smoke_install.as_db_value());
+                for failure in &report.failures {
+                    println!("Failure: {failure}");
+                }
+                println!("Evidence: {}", path.display());
+                println!("Release verification: {}", report.result.as_db_value());
+                if report.result != ReleaseCheckResult::Pass {
+                    std::process::exit(1);
+                }
+            }
+        },
         Command::Story(args) => match args.action {
             StoryAction::Add(args) => {
                 service.add_story(StoryAddInput {
@@ -544,6 +604,10 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                     contract_doc: args.contract,
                     verify_command: args.verify,
                     notes: args.notes,
+                    release_proof_required: BoolFlag::parse(
+                        "story add: --release-proof",
+                        &args.release_proof,
+                    )?,
                 })?;
                 println!("Story {} added.", args.id);
             }
@@ -560,6 +624,10 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                     e2e: parse_optional_bool("story update: --e2e", args.e2e)?,
                     platform: parse_optional_bool("story update: --platform", args.platform)?,
                     verify_command: args.verify,
+                    release_proof_required: parse_optional_bool(
+                        "story update: --release-proof",
+                        args.release_proof,
+                    )?,
                 })?;
                 println!("Story {} updated.", args.id);
             }
@@ -1186,6 +1254,17 @@ mod tests {
             .render_long_help()
             .to_string();
         assert!(matrix_help.contains("--numeric"));
+
+        let release_help = command
+            .find_subcommand_mut("release")
+            .unwrap()
+            .find_subcommand_mut("verify")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(release_help.contains("--version <VERSION>"));
+        assert!(release_help.contains("--origin <ORIGIN>"));
+        assert!(release_help.contains("--story <STORY>"));
     }
 
     #[test]

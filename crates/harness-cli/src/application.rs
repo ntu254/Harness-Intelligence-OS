@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use crate::domain::{
     ArchitectureCheckResult, BacklogFilter, BacklogRecord, BoolFlag, CsvList, DecisionRecord,
-    FrictionRecord, HarnessStats, InputType, IntakeRecord, RiskLane, StoryGateResult,
-    StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
+    FrictionRecord, HarnessStats, InputType, IntakeRecord, ReleaseVerificationReport, RiskLane,
+    StoryGateResult, StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
 };
 use crate::infrastructure::{HarnessRepository, SqliteHarnessRepository};
 
@@ -54,6 +54,7 @@ pub struct StoryAddInput {
     pub contract_doc: Option<String>,
     pub verify_command: Option<String>,
     pub notes: Option<String>,
+    pub release_proof_required: BoolFlag,
 }
 
 #[derive(Debug)]
@@ -66,6 +67,16 @@ pub struct StoryUpdateInput {
     pub e2e: Option<BoolFlag>,
     pub platform: Option<BoolFlag>,
     pub verify_command: Option<String>,
+    pub release_proof_required: Option<BoolFlag>,
+}
+
+#[derive(Debug)]
+pub struct ReleaseVerifyInput {
+    pub version: String,
+    pub origin: Option<String>,
+    pub platform: Option<String>,
+    pub output: Option<PathBuf>,
+    pub story_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -160,6 +171,13 @@ impl HarnessService {
 
     pub fn verify_story_gate(&self, id: &str) -> crate::infrastructure::Result<StoryGateResult> {
         self.repository.verify_story_gate(id)
+    }
+
+    pub fn verify_release(
+        &self,
+        input: ReleaseVerifyInput,
+    ) -> crate::infrastructure::Result<(PathBuf, ReleaseVerificationReport)> {
+        self.repository.verify_release(input)
     }
 
     pub fn check_architecture(

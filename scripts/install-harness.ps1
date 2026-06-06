@@ -361,6 +361,8 @@ $files = @(
     "docs/decisions/0005-prebuilt-rust-harness-cli.md",
     "docs/decisions/0006-phase-4-benchmark-triage.md",
     "docs/decisions/0007-hi-os-verification-gate.md",
+    "docs/decisions/0008-canonical-public-release-origin.md",
+    "docs/decisions/0009-release-verification-evidence-storage.md",
     "docs/decisions/README.md",
     "docs/product/README.md",
     "docs/stories/README.md",
@@ -378,7 +380,9 @@ $files = @(
     "scripts/schema/002-story-verify.sql",
     "scripts/schema/003-hi-os.sql",
     "scripts/schema/004-verification-gate.sql",
+    "scripts/schema/005-release-verification.sql",
     "harness-architecture.toml",
+    "harness-release.toml",
     ".gitignore"
 )
 

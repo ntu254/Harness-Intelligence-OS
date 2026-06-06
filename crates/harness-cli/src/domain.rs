@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -466,6 +466,60 @@ pub fn normalize_token(value: &str) -> String {
     }
 
     normalized
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct ReleaseConfig {
+    pub origin: String,
+    pub tag_prefix: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReleaseCheckResult {
+    Pass,
+    Fail,
+    Inconclusive,
+}
+
+impl ReleaseCheckResult {
+    pub fn as_db_value(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::Inconclusive => "inconclusive",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ReleaseAssetEvidence {
+    pub name: String,
+    pub download_url: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ReleaseVerificationReport {
+    pub checked_at_unix: u64,
+    pub version: String,
+    pub canonical_origin: String,
+    pub origin: String,
+    pub tag: String,
+    pub platform: String,
+    pub assets_checked: usize,
+    pub assets: Vec<ReleaseAssetEvidence>,
+    pub binary_asset: String,
+    pub checksum_asset: String,
+    pub expected_hash: Option<String>,
+    pub actual_hash: Option<String>,
+    pub download: ReleaseCheckResult,
+    pub checksum: ReleaseCheckResult,
+    pub version_check: ReleaseCheckResult,
+    pub smoke_install: ReleaseCheckResult,
+    pub version_output: Option<String>,
+    pub smoke_output: Option<String>,
+    pub failures: Vec<String>,
+    pub result: ReleaseCheckResult,
 }
 
 pub fn path_has_any_segment(path: &str, candidates: &[&str]) -> bool {

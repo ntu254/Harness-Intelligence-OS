@@ -1,20 +1,25 @@
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, types::ValueRef, Connection, OptionalExtension};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::application::{
     BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, ContextPackData, DecisionAddInput,
     DecisionVerifyResult, HarnessContext, InitResult, IntakeInput, MigrateResult, QueryTable,
-    StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput,
+    ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput,
 };
 use crate::domain::{
     normalize_token, score_trace, ArchitectureCheckResult, ArchitectureConfig,
     ArchitectureViolation, BacklogFilter, BacklogRecord, DecisionRecord, FrictionRecord,
-    HarnessStats, IntakeRecord, RiskLane, StoryGateResult, StoryMatrixRecord, StoryVerifyStatus,
+    HarnessStats, IntakeRecord, ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig,
+    ReleaseVerificationReport, RiskLane, StoryGateResult, StoryMatrixRecord, StoryVerifyStatus,
     TraceRecord, TraceScoreResult, TraceScoreSource,
 };
 
@@ -47,6 +52,12 @@ pub enum HarnessInfraError {
     MissingArchitectureConfig(String),
     #[error("architecture config is invalid: {0}")]
     InvalidArchitectureConfig(String),
+    #[error("release config missing: {0}")]
+    MissingReleaseConfig(String),
+    #[error("release config is invalid: {0}")]
+    InvalidReleaseConfig(String),
+    #[error("release verification input is invalid: {0}")]
+    InvalidReleaseInput(String),
     #[error("backlog close: backlog item '{0}' not found")]
     BacklogNotFound(i64),
     #[error("trace '{0}' not found")]
@@ -70,6 +81,10 @@ pub trait HarnessRepository {
     fn update_story(&self, input: StoryUpdateInput) -> Result<()>;
     fn verify_story(&self, id: &str) -> Result<StoryVerifyResult>;
     fn verify_story_gate(&self, id: &str) -> Result<StoryGateResult>;
+    fn verify_release(
+        &self,
+        input: ReleaseVerifyInput,
+    ) -> Result<(PathBuf, ReleaseVerificationReport)>;
     fn check_architecture(
         &self,
         config_path: Option<PathBuf>,
@@ -477,8 +492,10 @@ impl HarnessRepository for SqliteHarnessRepository {
     fn add_story(&self, input: StoryAddInput) -> Result<()> {
         let connection = self.open_existing()?;
         connection.execute(
-            "INSERT INTO story (id, title, risk_lane, contract_doc, verify_command, notes)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6);",
+            "INSERT INTO story (
+                id, title, risk_lane, contract_doc, verify_command, notes,
+                release_proof_required
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);",
             params![
                 input.id,
                 input.title,
@@ -486,6 +503,7 @@ impl HarnessRepository for SqliteHarnessRepository {
                 input.contract_doc,
                 input.verify_command,
                 input.notes,
+                input.release_proof_required.0,
             ],
         )?;
         Ok(())
@@ -499,6 +517,7 @@ impl HarnessRepository for SqliteHarnessRepository {
             && input.e2e.is_none()
             && input.platform.is_none()
             && input.verify_command.is_none()
+            && input.release_proof_required.is_none()
         {
             return Err(HarnessInfraError::EmptyStoryUpdate);
         }
@@ -512,8 +531,9 @@ impl HarnessRepository for SqliteHarnessRepository {
                 integration_proof=COALESCE(?4, integration_proof),
                 e2e_proof=COALESCE(?5, e2e_proof),
                 platform_proof=COALESCE(?6, platform_proof),
-                verify_command=COALESCE(?7, verify_command)
-             WHERE id=?8;",
+                verify_command=COALESCE(?7, verify_command),
+                release_proof_required=COALESCE(?8, release_proof_required)
+             WHERE id=?9;",
             params![
                 input.status,
                 input.evidence,
@@ -522,6 +542,7 @@ impl HarnessRepository for SqliteHarnessRepository {
                 input.e2e.map(|value| value.0),
                 input.platform.map(|value| value.0),
                 input.verify_command,
+                input.release_proof_required.map(|value| value.0),
                 input.id,
             ],
         )?;
@@ -578,7 +599,8 @@ impl HarnessRepository for SqliteHarnessRepository {
             .query_row(
                 "SELECT risk_lane, context_pack_path, arch_check_result,
                         last_verified_result, evidence, unit_proof,
-                        integration_proof, e2e_proof, platform_proof
+                        integration_proof, e2e_proof, platform_proof,
+                        release_proof_required
                  FROM story WHERE id=?1;",
                 params![id],
                 |row| {
@@ -592,6 +614,7 @@ impl HarnessRepository for SqliteHarnessRepository {
                         row.get::<_, i64>(6)?,
                         row.get::<_, i64>(7)?,
                         row.get::<_, i64>(8)?,
+                        row.get::<_, i64>(9)?,
                     ))
                 },
             )
@@ -652,6 +675,19 @@ impl HarnessRepository for SqliteHarnessRepository {
         if !trace_exists {
             missing.push("trace".to_owned());
         }
+        if story.9 == 1 {
+            let release_pass = connection.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM release_verification
+                    WHERE story_id=?1 AND result='pass'
+                 );",
+                params![id],
+                |row| row.get::<_, i64>(0),
+            )? == 1;
+            if !release_pass {
+                missing.push("release verification proof".to_owned());
+            }
+        }
 
         let passed = missing.is_empty();
         connection.execute(
@@ -666,6 +702,114 @@ impl HarnessRepository for SqliteHarnessRepository {
             passed,
             missing,
         })
+    }
+
+    fn verify_release(
+        &self,
+        input: ReleaseVerifyInput,
+    ) -> Result<(PathBuf, ReleaseVerificationReport)> {
+        validate_release_version(&input.version)?;
+        let config_path = self.repo_root.join("harness-release.toml");
+        if !config_path.is_file() {
+            return Err(HarnessInfraError::MissingReleaseConfig(
+                config_path.display().to_string(),
+            ));
+        }
+        let config_text = fs::read_to_string(&config_path)?;
+        let config = toml::from_str::<ReleaseConfig>(&config_text)
+            .map_err(|error| HarnessInfraError::InvalidReleaseConfig(error.to_string()))?;
+        validate_release_origin(&config.origin)?;
+        if config.tag_prefix.trim().is_empty() {
+            return Err(HarnessInfraError::InvalidReleaseConfig(
+                "tag_prefix must not be empty".to_owned(),
+            ));
+        }
+
+        if let Some(story_id) = input.story_id.as_deref() {
+            let connection = self.open_existing()?;
+            let exists = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM story WHERE id=?1);",
+                params![story_id],
+                |row| row.get::<_, i64>(0),
+            )? == 1;
+            if !exists {
+                return Err(HarnessInfraError::StoryNotFound(story_id.to_owned()));
+            }
+        }
+
+        let origin = input.origin.unwrap_or_else(|| config.origin.clone());
+        validate_release_origin(&origin)?;
+        let platform = input.platform.unwrap_or_else(host_release_platform);
+        let binary_asset = binary_asset_for_platform(&platform)?.to_owned();
+        let checksum_asset = format!("{binary_asset}.sha256");
+        let tag = format!("{}{}", config.tag_prefix, input.version);
+        let output_path = input.output.unwrap_or_else(|| {
+            self.repo_root
+                .join(format!(".harness/release/{tag}-release-verify.json"))
+        });
+
+        let mut report = ReleaseVerificationReport {
+            checked_at_unix: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            version: input.version.clone(),
+            canonical_origin: config.origin.clone(),
+            origin: origin.clone(),
+            tag: tag.clone(),
+            platform: platform.clone(),
+            assets_checked: 0,
+            assets: Vec::new(),
+            binary_asset: binary_asset.clone(),
+            checksum_asset: checksum_asset.clone(),
+            expected_hash: None,
+            actual_hash: None,
+            download: ReleaseCheckResult::Inconclusive,
+            checksum: ReleaseCheckResult::Inconclusive,
+            version_check: ReleaseCheckResult::Inconclusive,
+            smoke_install: ReleaseCheckResult::Inconclusive,
+            version_output: None,
+            smoke_output: None,
+            failures: Vec::new(),
+            result: ReleaseCheckResult::Inconclusive,
+        };
+
+        if input.story_id.is_some() && origin != config.origin {
+            report.result = ReleaseCheckResult::Fail;
+            report.failures.push(format!(
+                "story-linked verification origin '{origin}' does not match canonical origin '{}'",
+                config.origin
+            ));
+        } else {
+            run_release_checks(&origin, &tag, &platform, &mut report)?;
+        }
+
+        write_release_report(&output_path, &report)?;
+        let report_path = path_for_storage(&self.repo_root, &output_path);
+        let connection = self.open_existing()?;
+        connection.execute(
+            "INSERT INTO release_verification (
+                version, origin, tag, platform, result, report_path,
+                assets_checked, failure, story_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9);",
+            params![
+                report.version,
+                report.origin,
+                report.tag,
+                report.platform,
+                report.result.as_db_value(),
+                report_path,
+                report.assets_checked as i64,
+                if report.failures.is_empty() {
+                    None
+                } else {
+                    Some(report.failures.join("; "))
+                },
+                input.story_id,
+            ],
+        )?;
+
+        Ok((output_path, report))
     }
 
     fn check_architecture(
@@ -1613,14 +1757,394 @@ fn sql_value_to_string(value: ValueRef<'_>) -> String {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct GithubRelease {
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+struct ExternalFailure {
+    result: ReleaseCheckResult,
+    message: String,
+}
+
+fn validate_release_version(version: &str) -> Result<()> {
+    let parts = version.split('.').collect::<Vec<_>>();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.chars().all(|value| value.is_ascii_digit()))
+    {
+        return Err(HarnessInfraError::InvalidReleaseInput(format!(
+            "version '{version}' must use numeric major.minor.patch form"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_release_origin(origin: &str) -> Result<()> {
+    let parts = origin.split('/').collect::<Vec<_>>();
+    if parts.len() != 2
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.chars().all(is_release_origin_character))
+    {
+        return Err(HarnessInfraError::InvalidReleaseInput(format!(
+            "origin '{origin}' must use owner/repository form"
+        )));
+    }
+    Ok(())
+}
+
+fn is_release_origin_character(value: char) -> bool {
+    value.is_ascii_alphanumeric() || matches!(value, '-' | '_' | '.')
+}
+
+fn host_release_platform() -> String {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("windows", "x86_64") => "windows-x64",
+        ("linux", "x86_64") => "linux-x64",
+        ("linux", "aarch64") => "linux-arm64",
+        ("macos", "x86_64") => "macos-x64",
+        ("macos", "aarch64") => "macos-arm64",
+        (os, arch) => return format!("{os}-{arch}"),
+    }
+    .to_owned()
+}
+
+fn binary_asset_for_platform(platform: &str) -> Result<&'static str> {
+    match platform {
+        "windows-x64" => Ok("harness-cli-windows-x64.exe"),
+        "linux-x64" => Ok("harness-cli-linux-x64"),
+        "linux-arm64" => Ok("harness-cli-linux-arm64"),
+        "macos-x64" => Ok("harness-cli-macos-x64"),
+        "macos-arm64" => Ok("harness-cli-macos-arm64"),
+        _ => Err(HarnessInfraError::InvalidReleaseInput(format!(
+            "unsupported platform '{platform}'. Use windows-x64, linux-x64, linux-arm64, macos-x64, or macos-arm64"
+        ))),
+    }
+}
+
+fn expected_release_assets() -> Vec<String> {
+    [
+        "harness-cli-linux-arm64",
+        "harness-cli-linux-x64",
+        "harness-cli-macos-arm64",
+        "harness-cli-macos-x64",
+        "harness-cli-windows-x64.exe",
+    ]
+    .into_iter()
+    .flat_map(|binary| [binary.to_owned(), format!("{binary}.sha256")])
+    .collect()
+}
+
+fn run_release_checks(
+    origin: &str,
+    tag: &str,
+    platform: &str,
+    report: &mut ReleaseVerificationReport,
+) -> Result<()> {
+    let api_url = format!("https://api.github.com/repos/{origin}/releases/tags/{tag}");
+    let release = match fetch_github_release(&api_url) {
+        Ok(release) => release,
+        Err(failure) => {
+            report.result = failure.result;
+            report.failures.push(failure.message);
+            return Ok(());
+        }
+    };
+
+    report.assets = release
+        .assets
+        .iter()
+        .map(|asset| ReleaseAssetEvidence {
+            name: asset.name.clone(),
+            download_url: asset.browser_download_url.clone(),
+        })
+        .collect();
+    report.assets_checked = report.assets.len();
+
+    let expected = expected_release_assets();
+    let observed = release
+        .assets
+        .iter()
+        .map(|asset| asset.name.clone())
+        .collect::<Vec<_>>();
+    let missing = missing_expected_assets(&expected, &observed);
+    if !missing.is_empty() {
+        report.result = ReleaseCheckResult::Fail;
+        report.failures.push(format!(
+            "release is missing expected assets: {}",
+            missing.join(", ")
+        ));
+        return Ok(());
+    }
+
+    let binary = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == report.binary_asset)
+        .expect("complete asset contract includes selected binary");
+    let checksum = release
+        .assets
+        .iter()
+        .find(|asset| asset.name == report.checksum_asset)
+        .expect("complete asset contract includes selected checksum");
+    let temp_dir = tempfile::tempdir()?;
+    let binary_path = temp_dir.path().join(&binary.name);
+
+    let binary_bytes = match download_public_asset(&binary.browser_download_url) {
+        Ok(bytes) => bytes,
+        Err(failure) => {
+            report.download = failure.result;
+            report.result = failure.result;
+            report.failures.push(failure.message);
+            return Ok(());
+        }
+    };
+    let checksum_bytes = match download_public_asset(&checksum.browser_download_url) {
+        Ok(bytes) => bytes,
+        Err(failure) => {
+            report.download = failure.result;
+            report.result = failure.result;
+            report.failures.push(failure.message);
+            return Ok(());
+        }
+    };
+    report.download = ReleaseCheckResult::Pass;
+    fs::write(&binary_path, &binary_bytes)?;
+
+    let expected_hash = match parse_sha256(&checksum_bytes) {
+        Ok(hash) => hash,
+        Err(message) => {
+            report.checksum = ReleaseCheckResult::Fail;
+            report.result = ReleaseCheckResult::Fail;
+            report.failures.push(message);
+            return Ok(());
+        }
+    };
+    let actual_hash = format!("{:x}", Sha256::digest(&binary_bytes));
+    report.expected_hash = Some(expected_hash.clone());
+    report.actual_hash = Some(actual_hash.clone());
+    if expected_hash != actual_hash {
+        report.checksum = ReleaseCheckResult::Fail;
+        report.result = ReleaseCheckResult::Fail;
+        report.failures.push(format!(
+            "checksum mismatch for {}: expected {expected_hash}, got {actual_hash}",
+            binary.name
+        ));
+        return Ok(());
+    }
+    report.checksum = ReleaseCheckResult::Pass;
+
+    if platform != host_release_platform() {
+        report.result = ReleaseCheckResult::Inconclusive;
+        report.failures.push(format!(
+            "platform '{platform}' cannot be executed on host '{}'",
+            host_release_platform()
+        ));
+        return Ok(());
+    }
+
+    if let Err(error) = make_executable(&binary_path) {
+        report.version_check = ReleaseCheckResult::Fail;
+        report.result = ReleaseCheckResult::Fail;
+        report.failures.push(format!(
+            "downloaded binary could not be made executable: {error}"
+        ));
+        return Ok(());
+    }
+    let version_output = match Command::new(&binary_path).arg("--version").output() {
+        Ok(output) => output,
+        Err(error) => {
+            report.version_check = ReleaseCheckResult::Fail;
+            report.result = ReleaseCheckResult::Fail;
+            report.failures.push(format!(
+                "downloaded binary could not run --version: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    let version_text = combined_output(&version_output);
+    report.version_output = Some(version_text.clone());
+    if !version_output.status.success()
+        || version_text.trim() != format!("harness-cli {}", report.version)
+    {
+        report.version_check = ReleaseCheckResult::Fail;
+        report.result = ReleaseCheckResult::Fail;
+        report.failures.push(format!(
+            "version check expected 'harness-cli {}', got '{}'",
+            report.version,
+            version_text.trim()
+        ));
+        return Ok(());
+    }
+    report.version_check = ReleaseCheckResult::Pass;
+
+    let smoke_output = match Command::new(&binary_path)
+        .args(["arch-check", "--help"])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            report.smoke_install = ReleaseCheckResult::Fail;
+            report.result = ReleaseCheckResult::Fail;
+            report
+                .failures
+                .push(format!("smoke command could not start: {error}"));
+            return Ok(());
+        }
+    };
+    let smoke_text = combined_output(&smoke_output);
+    report.smoke_output = Some(smoke_text);
+    if !smoke_output.status.success() {
+        report.smoke_install = ReleaseCheckResult::Fail;
+        report.result = ReleaseCheckResult::Fail;
+        report
+            .failures
+            .push("smoke command 'arch-check --help' failed".to_owned());
+        return Ok(());
+    }
+
+    report.smoke_install = ReleaseCheckResult::Pass;
+    report.result = ReleaseCheckResult::Pass;
+    Ok(())
+}
+
+fn fetch_github_release(url: &str) -> std::result::Result<GithubRelease, ExternalFailure> {
+    let response = ureq::get(url)
+        .set("Accept", "application/vnd.github+json")
+        .set("User-Agent", "harness-cli-release-verify")
+        .call()
+        .map_err(|error| classify_http_error("release metadata", error))?;
+    response
+        .into_json::<GithubRelease>()
+        .map_err(|error| ExternalFailure {
+            result: ReleaseCheckResult::Fail,
+            message: format!("release metadata is invalid JSON: {error}"),
+        })
+}
+
+fn download_public_asset(url: &str) -> std::result::Result<Vec<u8>, ExternalFailure> {
+    let response = ureq::get(url)
+        .set("User-Agent", "harness-cli-release-verify")
+        .call()
+        .map_err(|error| classify_http_error("public asset download", error))?;
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .read_to_end(&mut bytes)
+        .map_err(|error| ExternalFailure {
+            result: ReleaseCheckResult::Inconclusive,
+            message: format!("public asset download interrupted: {error}"),
+        })?;
+    Ok(bytes)
+}
+
+fn classify_http_error(context: &str, error: ureq::Error) -> ExternalFailure {
+    match error {
+        ureq::Error::Status(status, _) => {
+            let result = http_status_result(status);
+            ExternalFailure {
+                result,
+                message: if result == ReleaseCheckResult::Inconclusive {
+                    format!("{context} unavailable with HTTP {status}")
+                } else {
+                    format!("{context} rejected with HTTP {status}")
+                },
+            }
+        }
+        ureq::Error::Transport(error) => ExternalFailure {
+            result: ReleaseCheckResult::Inconclusive,
+            message: format!("{context} unavailable: {error}"),
+        },
+    }
+}
+
+fn http_status_result(status: u16) -> ReleaseCheckResult {
+    if status >= 500 || status == 429 {
+        ReleaseCheckResult::Inconclusive
+    } else {
+        ReleaseCheckResult::Fail
+    }
+}
+
+fn missing_expected_assets(expected: &[String], observed: &[String]) -> Vec<String> {
+    expected
+        .iter()
+        .filter(|name| !observed.contains(name))
+        .cloned()
+        .collect()
+}
+
+fn parse_sha256(bytes: &[u8]) -> std::result::Result<String, String> {
+    let text = String::from_utf8_lossy(bytes);
+    let hash = text.split_whitespace().next().unwrap_or_default();
+    if hash.len() != 64 || !hash.chars().all(|value| value.is_ascii_hexdigit()) {
+        return Err("checksum asset does not start with a valid SHA256 digest".to_owned());
+    }
+    Ok(hash.to_ascii_lowercase())
+}
+
+fn combined_output(output: &std::process::Output) -> String {
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    text
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions)?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn write_release_report(path: &Path, report: &ReleaseVerificationReport) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("json.tmp");
+    fs::write(
+        &temporary,
+        serde_json::to_vec_pretty(report).map_err(|error| {
+            HarnessInfraError::InvalidReleaseInput(format!("could not serialize report: {error}"))
+        })?,
+    )?;
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    fs::rename(temporary, path)?;
+    Ok(())
+}
+
+fn path_for_storage(repo_root: &Path, path: &Path) -> String {
+    path.strip_prefix(repo_root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
+        .replace('\\', "/")
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
 
     use super::*;
     use crate::application::{
-        BacklogAddInput, BacklogCloseInput, DecisionAddInput, IntakeInput, StoryAddInput,
-        StoryUpdateInput, TraceInput,
+        BacklogAddInput, BacklogCloseInput, DecisionAddInput, IntakeInput, ReleaseVerifyInput,
+        StoryAddInput, StoryUpdateInput, TraceInput,
     };
     use crate::domain::{BacklogFilter, BoolFlag, CsvList, InputType, RiskLane, TraceQualityTier};
 
@@ -1657,13 +2181,25 @@ mod tests {
         assert_eq!(repository.query_stats().unwrap().intakes, 0);
         let connection = repository.open_existing().unwrap();
         let schema_version = SqliteHarnessRepository::schema_version(&connection).unwrap();
-        assert_eq!(schema_version, 4);
+        assert_eq!(schema_version, 5);
         let story_columns = story_columns(&connection);
         assert!(story_columns.contains(&"verify_command".to_owned()));
         assert!(story_columns.contains(&"last_verified_at".to_owned()));
         assert!(story_columns.contains(&"last_verified_result".to_owned()));
         assert!(story_columns.contains(&"arch_check_result".to_owned()));
         assert!(story_columns.contains(&"gate_result".to_owned()));
+        assert!(story_columns.contains(&"release_proof_required".to_owned()));
+        let release_table_exists = connection
+            .query_row(
+                "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master
+                WHERE type='table' AND name='release_verification'
+             );",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(release_table_exists, 1);
     }
 
     #[test]
@@ -1676,11 +2212,11 @@ mod tests {
         let result = repository.migrate().unwrap();
 
         assert_eq!(result.current_version, 1);
-        assert_eq!(result.applied, vec![2, 3, 4]);
+        assert_eq!(result.applied, vec![2, 3, 4, 5]);
         let connection = repository.open_existing().unwrap();
         assert_eq!(
             SqliteHarnessRepository::schema_version(&connection).unwrap(),
-            4
+            5
         );
         let story_columns = story_columns(&connection);
         assert!(story_columns.contains(&"verify_command".to_owned()));
@@ -1688,6 +2224,7 @@ mod tests {
         assert!(story_columns.contains(&"last_verified_result".to_owned()));
         assert!(story_columns.contains(&"context_pack_path".to_owned()));
         assert!(story_columns.contains(&"gate_result".to_owned()));
+        assert!(story_columns.contains(&"release_proof_required".to_owned()));
     }
 
     #[test]
@@ -1785,6 +2322,7 @@ mod tests {
                 contract_doc: None,
                 verify_command: Some("echo ok".to_owned()),
                 notes: None,
+                release_proof_required: BoolFlag(0),
             })
             .unwrap();
         assert_eq!(
@@ -1806,6 +2344,7 @@ mod tests {
                 e2e: None,
                 platform: None,
                 verify_command: Some("npm test".to_owned()),
+                release_proof_required: None,
             })
             .unwrap();
 
@@ -1851,6 +2390,7 @@ mod tests {
                 contract_doc: None,
                 verify_command: Some(verify_command),
                 notes: None,
+                release_proof_required: BoolFlag(0),
             })
             .unwrap();
         let pass = repository.verify_story("US-PASS").unwrap();
@@ -1876,6 +2416,7 @@ mod tests {
                 contract_doc: None,
                 verify_command: Some("exit 1".to_owned()),
                 notes: None,
+                release_proof_required: BoolFlag(0),
             })
             .unwrap();
         let fail = repository.verify_story("US-FAIL").unwrap();
@@ -1897,6 +2438,7 @@ mod tests {
                 contract_doc: None,
                 verify_command: None,
                 notes: None,
+                release_proof_required: BoolFlag(0),
             })
             .unwrap();
         assert!(matches!(
@@ -1918,6 +2460,7 @@ mod tests {
                 contract_doc: None,
                 verify_command: None,
                 notes: None,
+                release_proof_required: BoolFlag(0),
             })
             .unwrap();
         repository
@@ -1930,6 +2473,7 @@ mod tests {
                 e2e: None,
                 platform: None,
                 verify_command: None,
+                release_proof_required: None,
             })
             .unwrap();
         assert_eq!(repository.query_matrix().unwrap()[0].unit, 1);
@@ -2419,6 +2963,7 @@ forbidden_imports = ["infrastructure"]
                 contract_doc: None,
                 verify_command: Some("exit 0".to_owned()),
                 notes: None,
+                release_proof_required: BoolFlag(0),
             })
             .unwrap();
 
@@ -2468,6 +3013,7 @@ forbidden_imports = ["infrastructure"]
                 e2e: None,
                 platform: None,
                 verify_command: None,
+                release_proof_required: None,
             })
             .unwrap();
         repository
@@ -2491,5 +3037,116 @@ forbidden_imports = ["infrastructure"]
 
         let complete = repository.verify_story_gate("US-GATE").unwrap();
         assert!(complete.passed, "{:?}", complete.missing);
+
+        repository
+            .update_story(StoryUpdateInput {
+                id: "US-GATE".to_owned(),
+                status: None,
+                evidence: None,
+                unit: None,
+                integration: None,
+                e2e: None,
+                platform: None,
+                verify_command: None,
+                release_proof_required: Some(BoolFlag(1)),
+            })
+            .unwrap();
+        let release_missing = repository.verify_story_gate("US-GATE").unwrap();
+        assert!(!release_missing.passed);
+        assert!(release_missing
+            .missing
+            .contains(&"release verification proof".to_owned()));
+
+        let connection = repository.open_existing().unwrap();
+        connection
+            .execute(
+                "INSERT INTO release_verification (
+                    version, origin, tag, platform, result, report_path,
+                    assets_checked, story_id
+                 ) VALUES (
+                    '0.2.0', 'ntu254/Harness-Intelligence-OS',
+                    'harness-cli-v0.2.0', 'windows-x64', 'pass',
+                    '.harness/release/test.json', 10, 'US-GATE'
+                 );",
+                [],
+            )
+            .unwrap();
+        let release_complete = repository.verify_story_gate("US-GATE").unwrap();
+        assert!(release_complete.passed, "{:?}", release_complete.missing);
+    }
+
+    #[test]
+    fn release_contract_validates_versions_assets_and_checksums() {
+        assert!(validate_release_version("0.2.0").is_ok());
+        assert!(validate_release_version("v0.2.0").is_err());
+        assert!(validate_release_origin("ntu254/Harness-Intelligence-OS").is_ok());
+        assert!(validate_release_origin("not-an-origin").is_err());
+        assert_eq!(expected_release_assets().len(), 10);
+        assert!(
+            expected_release_assets().contains(&"harness-cli-windows-x64.exe.sha256".to_owned())
+        );
+        assert_eq!(
+            parse_sha256(
+                b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  binary"
+            )
+            .unwrap(),
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        );
+        assert!(parse_sha256(b"not-a-hash").is_err());
+        assert_eq!(http_status_result(404), ReleaseCheckResult::Fail);
+        assert_eq!(http_status_result(429), ReleaseCheckResult::Inconclusive);
+        assert_eq!(http_status_result(503), ReleaseCheckResult::Inconclusive);
+        let expected = expected_release_assets();
+        let mut observed = expected.clone();
+        observed.retain(|name| name != "harness-cli-linux-x64.sha256");
+        assert_eq!(
+            missing_expected_assets(&expected, &observed),
+            vec!["harness-cli-linux-x64.sha256".to_owned()]
+        );
+    }
+
+    #[test]
+    fn story_linked_release_override_mismatch_fails_without_network() {
+        let (temp_dir, repository) = test_repository();
+        repository.init().unwrap();
+        repository
+            .add_story(StoryAddInput {
+                id: "US-RELEASE".to_owned(),
+                title: "Release evidence".to_owned(),
+                risk_lane: RiskLane::HighRisk,
+                contract_doc: None,
+                verify_command: None,
+                notes: None,
+                release_proof_required: BoolFlag(1),
+            })
+            .unwrap();
+
+        let output = temp_dir.path().join("release-report.json");
+        let (_, report) = repository
+            .verify_release(ReleaseVerifyInput {
+                version: "0.2.0".to_owned(),
+                origin: Some("example/not-canonical".to_owned()),
+                platform: Some("windows-x64".to_owned()),
+                output: Some(output.clone()),
+                story_id: Some("US-RELEASE".to_owned()),
+            })
+            .unwrap();
+
+        assert_eq!(report.result, ReleaseCheckResult::Fail);
+        assert!(output.is_file());
+        let connection = repository.open_existing().unwrap();
+        let stored = connection
+            .query_row(
+                "SELECT result FROM release_verification WHERE story_id='US-RELEASE';",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(stored, "fail");
+        assert!(repository
+            .verify_story_gate("US-RELEASE")
+            .unwrap()
+            .missing
+            .contains(&"release verification proof".to_owned()));
     }
 }

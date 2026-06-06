@@ -48,7 +48,7 @@ release proof should audit the canonical public v0.2.0 release.
 
 ## Commands
 
-Implementation-phase commands are expected to include:
+Validation commands:
 
 ```text
 cargo fmt --all -- --check
@@ -59,7 +59,7 @@ harness-cli arch-check --story US-021
 harness-cli story verify US-021
 ```
 
-Do not configure the story verify command until the implementation and test
+The story verification command is configured after the implementation and test
 contract exist.
 
 ## Acceptance Evidence
@@ -78,6 +78,31 @@ Required before implementation can be marked complete:
   distribution work marked `release_proof_required`.
 - Detailed trace is linked to `US-021`.
 
+## Implementation Evidence
+
+- `cargo test --workspace`: 27 tests passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- `cargo fmt --all -- --check`: passed after formatting.
+- Public release verification passed for
+  `ntu254/Harness-Intelligence-OS`, tag `harness-cli-v0.2.0`.
+- Ten release assets were discovered: five native binaries and five matching
+  SHA256 files.
+- The Windows x64 binary and checksum downloaded without authentication.
+- Expected and actual SHA256 matched:
+  `af2cac539f1b8571451c2b79224afa539bcb2da886fd7f87639f6e0e90c00ee8`.
+- The downloaded binary reported `harness-cli 0.2.0`.
+- The smoke command `arch-check --help` passed.
+- Operational evidence was written to
+  `.harness/release/harness-cli-v0.2.0-release-verify.json`.
+- SQLite summary result is `pass` and is linked to `US-021`.
+- PowerShell and Bash installer syntax checks passed.
+- A clean Windows installer smoke created schema version 5 and propagated the
+  release policy, migration, and decisions.
+- Architecture check passed for `US-021`.
+- Detailed implementation trace `#10` achieved the required High-Risk tier
+  `3/3`.
+- `story verify US-021` passed the mechanical checks and governance gate.
+
 ## Design Review
 
 - Command contract accepted:
@@ -86,7 +111,7 @@ Required before implementation can be marked complete:
 - Option C accepted: full JSON report plus durable SQLite summary.
 - Story governance uses an explicit durable `release_proof_required` flag.
 - Network/GitHub unavailability is `inconclusive`, not `pass`.
-- Story remains Planned until a separate implementation-start action.
+- Story moved to In Progress only when implementation began.
 
 Planning evidence:
 

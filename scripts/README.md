@@ -151,6 +151,28 @@ Migration files live under `scripts/schema/` and are named `NNN-description.sql`
 where `NNN` is a zero-padded version number. Run `scripts/bin/harness-cli migrate` to
 apply pending migrations.
 
+## Release Verification
+
+Verify an existing public Harness CLI release through the complete trusted
+distribution chain:
+
+```powershell
+.\scripts\bin\harness-cli.exe release verify --version 0.2.0 --story US-021
+```
+
+The default public origin and tag prefix come from `harness-release.toml`.
+The command checks release metadata, all expected platform assets, the selected
+binary download, SHA256, reported version, and a non-mutating smoke command.
+It writes a detailed JSON report under `.harness/release/` and a summary row to
+SQLite. A trust failure is `fail`; network or GitHub unavailability is
+`inconclusive`. Both exit non-zero and neither satisfies story governance.
+
+Stories opt into the blocking evidence requirement explicitly:
+
+```powershell
+.\scripts\bin\harness-cli.exe story update --id US-021 --release-proof 1
+```
+
 ## Future Command Contract
 
 Expected future checks:
