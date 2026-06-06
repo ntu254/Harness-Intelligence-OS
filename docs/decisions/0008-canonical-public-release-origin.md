@@ -4,13 +4,13 @@ Date: 2026-06-06
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
-HI-OS v0.2.0 is released privately with verified binaries, SHA256 assets, and
-passing governance checks. It is not public ship-ready because the installer
-defaults to a public upstream repository that does not host the v0.2.0 release.
+HI-OS v0.2.0 was initially released privately with verified binaries, SHA256
+assets, and passing governance checks. The installer defaulted to a different
+public upstream repository that did not host the v0.2.0 release.
 
 HI-OS v0.3.0 cannot implement authoritative release verification until one
 public distribution origin is accepted. Otherwise the command could validate a
@@ -19,25 +19,26 @@ contract.
 
 ## Decision
 
-No option is accepted yet.
+Accept `ntu254/Harness-Intelligence-OS` as the canonical public source and
+release origin.
 
-The selected option must define:
+- Canonical repository: `https://github.com/ntu254/Harness-Intelligence-OS`
+- Installer source:
+  `https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main`
+- CLI assets:
+  `https://github.com/ntu254/Harness-Intelligence-OS/releases/download/<tag>`
+- Development and staging use branches, pull requests, workflow artifacts, and
+  prereleases inside the same public repository.
+- Stable installer pins reference accepted release tags in this repository.
 
-- The canonical public repository and release URL.
-- The repository used by default installer source URLs.
-- The repository used by default CLI asset URLs.
-- How private development releases relate to public distribution releases.
-- Who promotes a private release into the canonical public origin.
-
-Implementation of `release verify` must not begin until this decision becomes
-Accepted.
+The repository must remain public while it is the canonical installer and
+release authority.
 
 ## Alternatives Considered
 
 1. Make `ntu254/Harness-Intelligence-OS` the canonical public origin.
-   This creates one repository for development and distribution, but requires
-   making the current private repository public or publishing an equivalent
-   public repository.
+   Accepted. This creates one repository for source, development, and
+   distribution and removes origin ambiguity.
 2. Keep `hoangnb24/repository-harness` as the canonical public origin.
    This preserves current installer URLs, but requires an accepted upstream
    publication path and release ownership.
@@ -56,13 +57,14 @@ Positive:
 
 Tradeoffs:
 
-- Option 1 changes repository visibility or ownership expectations.
+- Development work and release assets are publicly visible.
 - Option 2 depends on upstream coordination.
 - Option 3 adds promotion and synchronization operations.
 
 ## Follow-Up
 
-- Select and accept one option.
-- Document the installer and release URL contract.
-- Update Backlog #1 with the accepted outcome.
-- Only then design `harness-cli release verify --version <version>`.
+- Keep installer defaults and repository metadata aligned with this origin.
+- Verify unauthenticated source and release downloads.
+- Close Backlog #1 after public installer smoke proof.
+- Create a separate story before implementing
+  `harness-cli release verify --version <version>`.

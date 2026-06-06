@@ -5,11 +5,11 @@ enforceable governance.
 
 ## Release Status
 
-HI-OS v0.2.0 is released privately with verified release artifacts.
-
-It is not public ship-ready because the canonical public release origin has not
-been established. The public installer still points to an upstream repository
-that does not host the v0.2.0 release.
+HI-OS v0.2.0 was initially released privately with verified release artifacts.
+Decision `0008` later established
+`ntu254/Harness-Intelligence-OS` as the canonical public source and release
+origin. The release assets, tag, and checksums were not changed during that
+distribution alignment.
 
 ## Added
 

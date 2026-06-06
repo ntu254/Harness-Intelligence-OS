@@ -2,7 +2,7 @@
 
 ## Status
 
-planned
+implemented
 
 ## Lane
 
@@ -22,12 +22,12 @@ authoritative.
 
 ## Acceptance Criteria
 
-- The canonical public release origin is documented.
-- The installer target origin is documented.
-- The relationship between private development releases and public
-  distribution releases is explained.
-- The v0.3 release verification scope is defined.
-- No `release verify` implementation starts before the origin decision is
+- [x] The canonical public release origin is documented.
+- [x] The installer target origin is documented.
+- [x] The relationship between development staging and public distribution
+  releases is explained.
+- [x] The v0.3 release verification scope is defined.
+- [x] No `release verify` implementation started before the origin decision was
   accepted.
 
 ## Design Notes
@@ -51,11 +51,13 @@ authoritative.
 
 ## Harness Delta
 
-Backlog #1 becomes the first prerequisite for HI-OS v0.3.0. Release
-verification design remains blocked until decision `0008` is accepted.
+Decision `0008` establishes one canonical public origin. Release verification
+remains a separate future story.
 
 ## Evidence
 
-- HI-OS v0.2.0 is released privately with verified artifacts.
-- The private origin hosts `harness-cli-v0.2.0`.
-- The current public installer target does not host that release.
+- Decision `0008` accepted `ntu254/Harness-Intelligence-OS`.
+- Installer source and release asset defaults use the accepted origin.
+- Development staging uses branches, pull requests, workflow artifacts, and
+  prereleases in the same public repository.
+- No `release verify` command was implemented.
