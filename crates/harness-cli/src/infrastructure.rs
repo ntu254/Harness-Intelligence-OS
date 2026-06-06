@@ -1,7 +1,7 @@
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,17 +11,17 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::application::{
-    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, ContextIngestInput,
-    ContextIngestSummary, ContextPackData, DecisionAddInput, DecisionVerifyResult, HarnessContext,
-    InitResult, IntakeInput, MigrateResult, QueryTable, ReleaseVerifyInput, StoryAddInput,
-    StoryUpdateInput, StoryVerifyResult, TraceInput,
+    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, CodeGraphImpactInput,
+    CodeGraphImpactResult, ContextIngestInput, ContextIngestSummary, ContextPackData,
+    DecisionAddInput, DecisionVerifyResult, HarnessContext, InitResult, IntakeInput, MigrateResult,
+    QueryTable, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput,
 };
 use crate::domain::{
-    normalize_token, score_trace, ArchitectureCheckResult, ArchitectureConfig,
-    ArchitectureViolation, BacklogFilter, BacklogRecord, ContextIngestDiagnostic,
-    ContextIngestGovernance, ContextIngestReport, ContextIngestStatus, ContextSource,
-    ContextSourceArtifact, DecisionRecord, FrictionRecord, HarnessStats, IntakeRecord,
-    MappedContext, ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig,
+    normalize_token, path_has_any_segment, score_trace, ArchitectureCheckResult,
+    ArchitectureConfig, ArchitectureViolation, BacklogFilter, BacklogRecord, CodeGraphMode,
+    ContextIngestDiagnostic, ContextIngestGovernance, ContextIngestReport, ContextIngestStatus,
+    ContextSource, ContextSourceArtifact, DecisionRecord, FrictionRecord, HarnessStats,
+    IntakeRecord, MappedContext, ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig,
     ReleaseVerificationReport, RiskLane, StoryGateResult, StoryMatrixRecord, StoryVerifyStatus,
     TraceRecord, TraceScoreResult, TraceScoreSource,
 };
@@ -91,6 +91,10 @@ pub trait HarnessRepository {
         input: ReleaseVerifyInput,
     ) -> Result<(PathBuf, ReleaseVerificationReport)>;
     fn ingest_context(&self, input: ContextIngestInput) -> Result<(PathBuf, ContextIngestReport)>;
+    fn produce_codegraph_impact(
+        &self,
+        input: CodeGraphImpactInput,
+    ) -> Result<CodeGraphImpactResult>;
     fn check_architecture(
         &self,
         config_path: Option<PathBuf>,
@@ -872,8 +876,13 @@ impl HarnessRepository for SqliteHarnessRepository {
             connection.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now');", [], |row| {
                 row.get::<_, String>(0)
             })?;
-        let mut validation =
-            validate_context_artifact(input.source, &input.story_id, &bytes, &artifact_sha256);
+        let mut validation = validate_context_artifact(
+            input.source,
+            &input.story_id,
+            &bytes,
+            &artifact_sha256,
+            &self.repo_root,
+        );
         let intake_exists = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM intake WHERE story_id=?1);",
             params![input.story_id],
@@ -967,6 +976,196 @@ impl HarnessRepository for SqliteHarnessRepository {
         transaction.commit()?;
 
         Ok((output_path, report))
+    }
+
+    fn produce_codegraph_impact(
+        &self,
+        input: CodeGraphImpactInput,
+    ) -> Result<CodeGraphImpactResult> {
+        let connection = self.open_existing()?;
+        let story_exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM story WHERE id=?1);",
+            params![input.story_id],
+            |row| row.get::<_, i64>(0),
+        )? == 1;
+        if !story_exists {
+            return Err(HarnessInfraError::StoryNotFound(input.story_id));
+        }
+        let generated_at =
+            connection.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now');", [], |row| {
+                row.get::<_, String>(0)
+            })?;
+        drop(connection);
+
+        let artifact_path = input.output.unwrap_or_else(|| {
+            self.repo_root.join(format!(
+                ".harness/context/{}-codegraph-impact.json",
+                input.story_id
+            ))
+        });
+        let raw_output_path = input.raw_output.unwrap_or_else(|| {
+            self.repo_root.join(format!(
+                ".harness/context/{}-codegraph-provider-response.json",
+                input.story_id
+            ))
+        });
+        let repository = git_output(&self.repo_root, &["config", "--get", "remote.origin.url"])
+            .unwrap_or_else(|| self.repo_root.display().to_string());
+        let revision = git_output(&self.repo_root, &["rev-parse", "HEAD"])
+            .unwrap_or_else(|| "unknown".to_owned());
+        let provider_version =
+            command_output(&input.executable, &["--version"], &self.repo_root, None)
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "unknown".to_owned());
+
+        let (provider_args, stdin, request_label) = match input.mode {
+            CodeGraphMode::ChangedFiles => {
+                let changed_files_path = input.changed_files.ok_or_else(|| {
+                    HarnessInfraError::InvalidContextIngest(
+                        "CodeGraph changed-files mode requires --changed-files".to_owned(),
+                    )
+                })?;
+                let changed_files = fs::read_to_string(&changed_files_path)?;
+                if changed_files.lines().all(|line| line.trim().is_empty()) {
+                    return Err(HarnessInfraError::InvalidContextIngest(
+                        "CodeGraph changed-files input must contain at least one path".to_owned(),
+                    ));
+                }
+                (
+                    vec![
+                        "affected".to_owned(),
+                        "--path".to_owned(),
+                        self.repo_root.display().to_string(),
+                        "--stdin".to_owned(),
+                        "--depth".to_owned(),
+                        input.depth.to_string(),
+                        "--json".to_owned(),
+                    ],
+                    Some(changed_files.into_bytes()),
+                    format!(
+                        "changed-files:{}",
+                        path_for_storage(&self.repo_root, &changed_files_path)
+                    ),
+                )
+            }
+            CodeGraphMode::Symbol => {
+                let symbol = input.symbol.ok_or_else(|| {
+                    HarnessInfraError::InvalidContextIngest(
+                        "CodeGraph symbol mode requires --symbol".to_owned(),
+                    )
+                })?;
+                if symbol.trim().is_empty() {
+                    return Err(HarnessInfraError::InvalidContextIngest(
+                        "CodeGraph symbol must not be empty".to_owned(),
+                    ));
+                }
+                (
+                    vec![
+                        "impact".to_owned(),
+                        symbol.clone(),
+                        "--path".to_owned(),
+                        self.repo_root.display().to_string(),
+                        "--depth".to_owned(),
+                        input.depth.to_string(),
+                        "--json".to_owned(),
+                    ],
+                    None,
+                    format!("symbol:{symbol}"),
+                )
+            }
+        };
+        let provider_command = format!("{} {}", input.executable, provider_args.join(" "));
+        let invocation_id = uuid_from_sha256(&format!(
+            "{}:{}:{}:{}",
+            input.story_id,
+            input.mode.as_cli_value(),
+            request_label,
+            generated_at
+        ));
+        let provider_result = command_output(
+            &input.executable,
+            &provider_args.iter().map(String::as_str).collect::<Vec<_>>(),
+            &self.repo_root,
+            stdin.as_deref(),
+        );
+
+        let mut raw_path = None;
+        let artifact = match provider_result {
+            Err(error) => codegraph_unavailable_artifact(
+                &input.story_id,
+                &generated_at,
+                &repository,
+                &revision,
+                &provider_version,
+                &invocation_id,
+                &format!("CodeGraph executable could not be started: {error}"),
+            ),
+            Ok(output) if !output.status.success() => {
+                let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                if !output.stdout.is_empty() || !output.stderr.is_empty() {
+                    write_provider_response(
+                        &raw_output_path,
+                        &output.stdout,
+                        &output.stderr,
+                        output.status.code(),
+                    )?;
+                    raw_path = Some(raw_output_path.clone());
+                }
+                codegraph_unavailable_artifact(
+                    &input.story_id,
+                    &generated_at,
+                    &repository,
+                    &revision,
+                    &provider_version,
+                    &invocation_id,
+                    if detail.is_empty() {
+                        "CodeGraph command exited non-zero"
+                    } else {
+                        &detail
+                    },
+                )
+            }
+            Ok(output) => {
+                write_provider_response(
+                    &raw_output_path,
+                    &output.stdout,
+                    &output.stderr,
+                    output.status.code(),
+                )?;
+                raw_path = Some(raw_output_path.clone());
+                normalize_codegraph_output(
+                    input.mode,
+                    &input.story_id,
+                    &generated_at,
+                    &repository,
+                    &revision,
+                    &provider_version,
+                    &invocation_id,
+                    &raw_output_path,
+                    &path_for_storage(&self.repo_root, &raw_output_path),
+                    &output.stdout,
+                )
+            }
+        };
+        write_json_value(&artifact_path, &artifact)?;
+        let (ingest_report_path, ingest_report) = self.ingest_context(ContextIngestInput {
+            story_id: input.story_id,
+            source: ContextSource::Codegraph,
+            file: artifact_path.clone(),
+            output: None,
+        })?;
+
+        Ok(CodeGraphImpactResult {
+            artifact_path,
+            raw_output_path: raw_path,
+            provider_version,
+            provider_command,
+            ingest_report_path,
+            ingest_report,
+        })
     }
 
     fn check_architecture(
@@ -2104,12 +2303,13 @@ fn validate_context_artifact(
     story_id: &str,
     bytes: &[u8],
     artifact_sha256: &str,
+    repo_root: &Path,
 ) -> ContextArtifactValidation {
     match source {
         ContextSource::Codegraph => {
             let artifact = serde_json::from_slice::<CodeGraphArtifact>(bytes);
             match artifact {
-                Ok(artifact) => validate_codegraph_artifact(artifact, story_id),
+                Ok(artifact) => validate_codegraph_artifact(artifact, story_id, repo_root),
                 Err(error) => invalid_artifact_validation(
                     artifact_sha256,
                     format!("CodeGraph artifact does not match schema v1.0.0: {error}"),
@@ -2149,6 +2349,7 @@ fn invalid_artifact_validation(hash: &str, message: String) -> ContextArtifactVa
 fn validate_codegraph_artifact(
     artifact: CodeGraphArtifact,
     expected_story: &str,
+    repo_root: &Path,
 ) -> ContextArtifactValidation {
     let mut diagnostics = validate_common_artifact(
         &artifact.schema_version,
@@ -2160,6 +2361,7 @@ fn validate_codegraph_artifact(
         &artifact.generated_at,
     );
     validate_codegraph_provenance(&artifact.provenance, artifact.status, &mut diagnostics);
+    validate_local_codegraph_inputs(&artifact.provenance.inputs, repo_root, &mut diagnostics);
 
     let (summary, mapped_context) = match artifact.status {
         ContextIngestStatus::Pass => match artifact.impact {
@@ -2384,6 +2586,45 @@ fn validate_codegraph_provenance(
     for input in &provenance.inputs {
         require_nonempty("provenance.inputs.uri", &input.uri, diagnostics);
         validate_sha256("provenance.inputs.sha256", &input.sha256, diagnostics);
+    }
+}
+
+fn validate_local_codegraph_inputs(
+    inputs: &[ArtifactInputRef],
+    repo_root: &Path,
+    diagnostics: &mut Vec<ContextIngestDiagnostic>,
+) {
+    for input in inputs {
+        if input.uri.contains("://") || input.uri.starts_with("git:") {
+            continue;
+        }
+        let candidate = PathBuf::from(&input.uri);
+        let path = if candidate.is_absolute() {
+            candidate
+        } else {
+            repo_root.join(candidate)
+        };
+        if !path.is_file() {
+            continue;
+        }
+        match fs::read(&path) {
+            Ok(bytes) => {
+                let actual = format!("{:x}", Sha256::digest(bytes));
+                if actual != input.sha256 {
+                    diagnostics.push(diagnostic(
+                        "PROVENANCE_SHA256_MISMATCH",
+                        &format!(
+                            "provenance input '{}' SHA256 does not match the referenced file",
+                            input.uri
+                        ),
+                    ));
+                }
+            }
+            Err(error) => diagnostics.push(diagnostic(
+                "PROVENANCE_INPUT_UNREADABLE",
+                &format!("cannot read provenance input '{}': {error}", input.uri),
+            )),
+        }
     }
 }
 
@@ -2799,6 +3040,422 @@ fn write_context_ingest_report(path: &Path, report: &ContextIngestReport) -> Res
         .map_err(|error| HarnessInfraError::InvalidContextIngest(error.to_string()))?;
     fs::write(path, format!("{json}\n"))?;
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeGraphAffectedOutput {
+    changed_files: Vec<String>,
+    affected_tests: Vec<String>,
+    total_dependents_traversed: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeGraphImpactOutput {
+    symbol: String,
+    depth: u32,
+    node_count: usize,
+    edge_count: usize,
+    affected: Vec<CodeGraphImpactNode>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeGraphImpactNode {
+    name: String,
+    kind: String,
+    file_path: String,
+    start_line: Option<u32>,
+}
+
+fn command_output(
+    executable: &str,
+    args: &[&str],
+    current_dir: &Path,
+    stdin: Option<&[u8]>,
+) -> std::io::Result<std::process::Output> {
+    let mut command = provider_command(executable, args);
+    command
+        .current_dir(current_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if stdin.is_some() {
+        command.stdin(Stdio::piped());
+    }
+    let mut child = command.spawn()?;
+    if let Some(bytes) = stdin {
+        child
+            .stdin
+            .take()
+            .expect("stdin is piped when input is provided")
+            .write_all(bytes)?;
+    }
+    child.wait_with_output()
+}
+
+fn provider_command(executable: &str, args: &[&str]) -> Command {
+    #[cfg(windows)]
+    {
+        let resolved = resolve_windows_executable(executable).unwrap_or_else(|| executable.into());
+        let extension = Path::new(&resolved)
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if extension.eq_ignore_ascii_case("cmd") || extension.eq_ignore_ascii_case("bat") {
+            let mut command = Command::new("cmd.exe");
+            command.arg("/D").arg("/C").arg(resolved).args(args);
+            return command;
+        }
+        let mut command = Command::new(resolved);
+        command.args(args);
+        command
+    }
+    #[cfg(not(windows))]
+    {
+        let mut command = Command::new(executable);
+        command.args(args);
+        command
+    }
+}
+
+#[cfg(windows)]
+fn resolve_windows_executable(executable: &str) -> Option<String> {
+    if Path::new(executable).extension().is_some() || Path::new(executable).components().count() > 1
+    {
+        return Some(executable.to_owned());
+    }
+    let output = Command::new("where.exe").arg(executable).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let paths = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    paths
+        .iter()
+        .find(|value| value.to_ascii_lowercase().ends_with(".cmd"))
+        .cloned()
+        .or_else(|| paths.first().cloned())
+}
+
+fn git_output(repo_root: &Path, args: &[&str]) -> Option<String> {
+    command_output("git", args, repo_root, None)
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn write_provider_response(
+    path: &Path,
+    stdout: &[u8],
+    stderr: &[u8],
+    exit_code: Option<i32>,
+) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if exit_code == Some(0) && !stdout.is_empty() {
+        fs::write(path, stdout)?;
+    } else {
+        write_json_value(
+            path,
+            &serde_json::json!({
+                "exit_code": exit_code,
+                "stdout": String::from_utf8_lossy(stdout),
+                "stderr": String::from_utf8_lossy(stderr)
+            }),
+        )?;
+    }
+    Ok(())
+}
+
+fn write_json_value(path: &Path, value: &serde_json::Value) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(value)
+        .map_err(|error| HarnessInfraError::InvalidContextIngest(error.to_string()))?;
+    fs::write(path, format!("{json}\n"))?;
+    Ok(())
+}
+
+fn codegraph_base_artifact(
+    story_id: &str,
+    generated_at: &str,
+    repository: &str,
+    revision: &str,
+    provider_version: &str,
+    invocation_id: &str,
+    inputs: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "1.0.0",
+        "artifact_type": "codegraph-impact",
+        "artifact_id": uuid_from_sha256(&format!("{story_id}:{invocation_id}")),
+        "story_id": story_id,
+        "generated_at": generated_at,
+        "provenance": {
+            "provider": "codegraph-cli",
+            "adapter": "harness-cli-codegraph",
+            "adapter_version": format!(
+                "{}; codegraph-cli {}",
+                env!("CARGO_PKG_VERSION"),
+                provider_version
+            ),
+            "invocation_id": invocation_id,
+            "repository": repository,
+            "revision": revision,
+            "inputs": inputs
+        }
+    })
+}
+
+fn codegraph_unavailable_artifact(
+    story_id: &str,
+    generated_at: &str,
+    repository: &str,
+    revision: &str,
+    provider_version: &str,
+    invocation_id: &str,
+    detail: &str,
+) -> serde_json::Value {
+    let mut artifact = codegraph_base_artifact(
+        story_id,
+        generated_at,
+        repository,
+        revision,
+        provider_version,
+        invocation_id,
+        serde_json::json!([]),
+    );
+    let object = artifact
+        .as_object_mut()
+        .expect("base artifact is an object");
+    object.insert("status".to_owned(), serde_json::json!("inconclusive"));
+    object.insert(
+        "unavailable".to_owned(),
+        serde_json::json!({
+            "reason": "provider_unavailable",
+            "retryable": true,
+            "detail": detail
+        }),
+    );
+    artifact
+}
+
+#[allow(clippy::too_many_arguments)]
+fn normalize_codegraph_output(
+    mode: CodeGraphMode,
+    story_id: &str,
+    generated_at: &str,
+    repository: &str,
+    revision: &str,
+    provider_version: &str,
+    invocation_id: &str,
+    raw_output_path: &Path,
+    raw_output_uri: &str,
+    stdout: &[u8],
+) -> serde_json::Value {
+    let raw_sha256 = format!(
+        "{:x}",
+        Sha256::digest(fs::read(raw_output_path).unwrap_or_else(|_| stdout.to_vec()))
+    );
+    let inputs = serde_json::json!([{
+        "uri": raw_output_uri,
+        "sha256": raw_sha256
+    }]);
+    let mut artifact = codegraph_base_artifact(
+        story_id,
+        generated_at,
+        repository,
+        revision,
+        provider_version,
+        invocation_id,
+        inputs,
+    );
+    let impact = match mode {
+        CodeGraphMode::ChangedFiles => {
+            let response = match serde_json::from_slice::<CodeGraphAffectedOutput>(stdout) {
+                Ok(response) => response,
+                Err(error) => {
+                    return codegraph_failed_artifact(
+                        artifact,
+                        "INVALID_PROVIDER_JSON",
+                        &format!("CodeGraph affected output is invalid: {error}"),
+                    );
+                }
+            };
+            normalize_affected_impact(response, raw_output_uri)
+        }
+        CodeGraphMode::Symbol => {
+            let response = match serde_json::from_slice::<CodeGraphImpactOutput>(stdout) {
+                Ok(response) => response,
+                Err(error) => {
+                    return codegraph_failed_artifact(
+                        artifact,
+                        "INVALID_PROVIDER_JSON",
+                        &format!("CodeGraph impact output is invalid: {error}"),
+                    );
+                }
+            };
+            normalize_symbol_impact(response, raw_output_uri)
+        }
+    };
+    let object = artifact
+        .as_object_mut()
+        .expect("base artifact is an object");
+    object.insert("status".to_owned(), serde_json::json!("pass"));
+    object.insert("impact".to_owned(), impact);
+    artifact
+}
+
+fn codegraph_failed_artifact(
+    mut artifact: serde_json::Value,
+    code: &str,
+    message: &str,
+) -> serde_json::Value {
+    let object = artifact
+        .as_object_mut()
+        .expect("base artifact is an object");
+    object.insert("status".to_owned(), serde_json::json!("fail"));
+    object.insert(
+        "errors".to_owned(),
+        serde_json::json!([{
+            "code": code,
+            "message": message,
+            "retryable": false
+        }]),
+    );
+    artifact
+}
+
+fn normalize_affected_impact(
+    response: CodeGraphAffectedOutput,
+    raw_path: &str,
+) -> serde_json::Value {
+    let mut files = Vec::new();
+    for path in &response.changed_files {
+        files.push(serde_json::json!({
+            "path": path,
+            "change_kind": "direct",
+            "reasons": ["Provided as a changed file to CodeGraph affected analysis."]
+        }));
+    }
+    for path in &response.affected_tests {
+        if !response.changed_files.contains(path) {
+            files.push(serde_json::json!({
+                "path": path,
+                "change_kind": "test",
+                "reasons": ["CodeGraph identified this test through transitive dependency analysis."]
+            }));
+        }
+    }
+    let all_paths = response
+        .changed_files
+        .iter()
+        .chain(response.affected_tests.iter())
+        .cloned()
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "summary": format!(
+            "CodeGraph traversed {} dependents for {} changed files and identified {} affected tests.",
+            response.total_dependents_traversed,
+            response.changed_files.len(),
+            response.affected_tests.len()
+        ),
+        "affected_files": files,
+        "dependency_edges": [],
+        "risk_flags": infer_codegraph_risk_flags(&all_paths),
+        "claims": [{
+            "claim_id": "CG-1",
+            "statement": format!(
+                "CodeGraph identified {} affected tests from {} changed files.",
+                response.affected_tests.len(),
+                response.changed_files.len()
+            ),
+            "evidence_refs": [raw_path]
+        }]
+    })
+}
+
+fn normalize_symbol_impact(response: CodeGraphImpactOutput, raw_path: &str) -> serde_json::Value {
+    let mut grouped = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for node in &response.affected {
+        let symbol = match node.start_line {
+            Some(line) => format!("{}:{}:{line}", node.kind, node.name),
+            None => format!("{}:{}", node.kind, node.name),
+        };
+        grouped
+            .entry(node.file_path.clone())
+            .or_default()
+            .push(symbol);
+    }
+    let paths = grouped.keys().cloned().collect::<Vec<_>>();
+    let affected_files = grouped
+        .into_iter()
+        .map(|(path, symbols)| {
+            serde_json::json!({
+                "path": path,
+                "change_kind": "transitive",
+                "reasons": [format!(
+                    "CodeGraph included this file in the depth-{} impact radius for '{}'.",
+                    response.depth, response.symbol
+                )],
+                "symbols": symbols
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "summary": format!(
+            "CodeGraph found {} affected symbols and {} graph edges for '{}' at depth {}.",
+            response.node_count, response.edge_count, response.symbol, response.depth
+        ),
+        "affected_files": affected_files,
+        "dependency_edges": [],
+        "risk_flags": infer_codegraph_risk_flags(&paths),
+        "claims": [{
+            "claim_id": "CG-1",
+            "statement": format!(
+                "Changing '{}' has a CodeGraph impact radius of {} symbols across {} files.",
+                response.symbol, response.node_count, paths.len()
+            ),
+            "evidence_refs": [raw_path]
+        }]
+    })
+}
+
+fn infer_codegraph_risk_flags(paths: &[String]) -> Vec<String> {
+    let mut flags = vec!["existing_behavior".to_owned()];
+    for path in paths {
+        let normalized = path.replace('\\', "/").to_ascii_lowercase();
+        for (segments, flag) in [
+            (&["auth", "authentication", "session", "jwt"][..], "auth"),
+            (
+                &["schema", "migration", "migrations", "database", "sql"][..],
+                "data_model",
+            ),
+            (
+                &["interface", "api", "route", "controller", "dto"][..],
+                "public_contracts",
+            ),
+            (
+                &["provider", "adapter", "integration", "webhook"][..],
+                "external_systems",
+            ),
+        ] {
+            if path_has_any_segment(&normalized, segments)
+                && !flags.iter().any(|existing| existing == flag)
+            {
+                flags.push(flag.to_owned());
+            }
+        }
+    }
+    flags
 }
 
 fn diagnostic(code: &str, message: &str) -> ContextIngestDiagnostic {
@@ -3251,13 +3908,13 @@ mod tests {
 
     use super::*;
     use crate::application::{
-        BacklogAddInput, BacklogCloseInput, ContextIngestInput, DecisionAddInput, HarnessContext,
-        HarnessService, IntakeInput, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput,
-        TraceInput,
+        BacklogAddInput, BacklogCloseInput, CodeGraphImpactInput, ContextIngestInput,
+        DecisionAddInput, HarnessContext, HarnessService, IntakeInput, ReleaseVerifyInput,
+        StoryAddInput, StoryUpdateInput, TraceInput,
     };
     use crate::domain::{
-        BacklogFilter, BoolFlag, ContextIngestStatus, ContextSource, CsvList, InputType, RiskLane,
-        TraceQualityTier,
+        BacklogFilter, BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList,
+        InputType, RiskLane, TraceQualityTier,
     };
 
     fn test_repository() -> (TempDir, SqliteHarnessRepository) {
@@ -3636,6 +4293,141 @@ mod tests {
         assert!(gate
             .missing
             .contains(&"NotebookLM context ingest proof".to_owned()));
+    }
+
+    #[test]
+    fn context_ingest_rejects_local_provenance_checksum_mismatch() {
+        let (_temp_dir, repo_root, repository) = context_test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-CHECKSUM", 1, 0);
+
+        let raw_path = repo_root.join("provider-response.json");
+        fs::write(&raw_path, b"{\"changedFiles\":[]}").unwrap();
+        let mut artifact = passing_codegraph_artifact("US-CHECKSUM");
+        artifact["provenance"]["inputs"] = serde_json::json!([{
+            "uri": raw_path.display().to_string(),
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }]);
+        let artifact_path = repo_root.join("checksum-mismatch.json");
+        fs::write(
+            &artifact_path,
+            serde_json::to_vec_pretty(&artifact).unwrap(),
+        )
+        .unwrap();
+
+        let (_, report) = repository
+            .ingest_context(ContextIngestInput {
+                story_id: "US-CHECKSUM".to_owned(),
+                source: ContextSource::Codegraph,
+                file: artifact_path,
+                output: None,
+            })
+            .unwrap();
+
+        assert_eq!(report.status, ContextIngestStatus::Fail);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|item| item.code == "PROVENANCE_SHA256_MISMATCH"));
+    }
+
+    #[test]
+    fn codegraph_adapter_records_missing_executable_as_inconclusive() {
+        let (_temp_dir, repo_root, repository) = context_test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-NO-CODEGRAPH", 1, 0);
+        let changed_files = repo_root.join("changed-files.txt");
+        fs::write(&changed_files, "src/lib.rs\n").unwrap();
+
+        let result = repository
+            .produce_codegraph_impact(CodeGraphImpactInput {
+                story_id: "US-NO-CODEGRAPH".to_owned(),
+                mode: CodeGraphMode::ChangedFiles,
+                changed_files: Some(changed_files),
+                symbol: None,
+                depth: 2,
+                output: None,
+                raw_output: None,
+                executable: "harness-codegraph-does-not-exist".to_owned(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            result.ingest_report.status,
+            ContextIngestStatus::Inconclusive
+        );
+        assert!(result.artifact_path.is_file());
+        assert!(!result.ingest_report.governance.eligible_for_story_verify);
+        let gate = repository.verify_story_gate("US-NO-CODEGRAPH").unwrap();
+        assert!(gate
+            .missing
+            .contains(&"CodeGraph context ingest proof".to_owned()));
+    }
+
+    #[test]
+    fn codegraph_adapter_normalizes_affected_output_into_passing_artifact() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let raw_path = temp_dir.path().join("provider.json");
+        let stdout = br#"{
+            "changedFiles": ["src/lib.rs"],
+            "affectedTests": ["tests/lib.test.rs"],
+            "totalDependentsTraversed": 3
+        }"#;
+        fs::write(&raw_path, stdout).unwrap();
+
+        let artifact = normalize_codegraph_output(
+            CodeGraphMode::ChangedFiles,
+            "US-999",
+            "2026-06-07T00:00:00Z",
+            "example/repo",
+            "abc123",
+            "0.9.9",
+            "run-1",
+            &raw_path,
+            &raw_path.display().to_string(),
+            stdout,
+        );
+        let bytes = serde_json::to_vec(&artifact).unwrap();
+        let validation = validate_context_artifact(
+            ContextSource::Codegraph,
+            "US-999",
+            &bytes,
+            &format!("{:x}", Sha256::digest(&bytes)),
+            temp_dir.path(),
+        );
+
+        assert_eq!(validation.status, ContextIngestStatus::Pass);
+        assert!(validation.diagnostics.is_empty());
+        assert_eq!(
+            artifact["impact"]["affected_files"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn codegraph_adapter_maps_invalid_provider_json_to_fail() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let raw_path = temp_dir.path().join("provider.json");
+        fs::write(&raw_path, b"not-json").unwrap();
+
+        let artifact = normalize_codegraph_output(
+            CodeGraphMode::ChangedFiles,
+            "US-999",
+            "2026-06-07T00:00:00Z",
+            "example/repo",
+            "abc123",
+            "0.9.9",
+            "run-2",
+            &raw_path,
+            &raw_path.display().to_string(),
+            b"not-json",
+        );
+
+        assert_eq!(artifact["status"], "fail");
+        assert_eq!(artifact["errors"][0]["code"], "INVALID_PROVIDER_JSON");
     }
 
     #[test]

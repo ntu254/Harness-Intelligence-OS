@@ -106,6 +106,11 @@ US-024 implements `context ingest` without calling either provider. Passing
 artifacts can update the linked intake and context pack. Failed or inconclusive
 artifacts remain audit evidence but never satisfy an explicit story gate.
 
+US-025 adds the CodeGraph CLI producer adapter. `harness-cli codegraph impact`
+runs local CodeGraph changed-files or symbol analysis, stores the raw response,
+normalizes a US-023 artifact, and sends it through US-024 ingestion. CodeGraph
+never writes Harness governance state directly.
+
 This separation keeps policy docs stable and human-readable while giving agents
 a structured, queryable record of operational state. It also prepares the
 harness for future observability and automated evolution without adding more

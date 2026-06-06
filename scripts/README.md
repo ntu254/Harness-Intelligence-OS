@@ -16,6 +16,7 @@ scripts/bin/harness-cli story update --id US-001 --unit 1 --integration 1 --e2e 
 scripts/bin/harness-cli arch-check --story US-001
 scripts/bin/harness-cli story verify US-001  # Run proof command and governance gate
 scripts/bin/harness-cli context ingest --story US-001 --source codegraph --file impact.json
+scripts/bin/harness-cli codegraph impact --story US-001 --mode changed-files --changed-files changed-files.txt
 scripts/bin/harness-cli decision ...  # Add a decision or run its verification
 scripts/bin/harness-cli backlog ...   # Add or close a backlog item
 scripts/bin/harness-cli trace ...     # Record and auto-score an agent execution trace
@@ -198,6 +199,40 @@ Stories can require passing source evidence explicitly:
 .\scripts\bin\harness-cli.exe story update --id US-024 --codegraph-ingest 1
 .\scripts\bin\harness-cli.exe story update --id US-024 --notebooklm-ingest 1
 ```
+
+## CodeGraph Adapter
+
+Initialize the local CodeGraph CLI index:
+
+```powershell
+codegraph init .
+```
+
+Generate and ingest impact evidence from changed files:
+
+```powershell
+.\scripts\bin\harness-cli.exe codegraph impact `
+  --story US-025 `
+  --mode changed-files `
+  --changed-files .harness/context/US-025-changed-files.txt `
+  --depth 5
+```
+
+Or analyze a symbol:
+
+```powershell
+.\scripts\bin\harness-cli.exe codegraph impact `
+  --story US-025 `
+  --mode symbol `
+  --symbol validate_context_artifact `
+  --depth 2
+```
+
+The adapter uses the local `codegraph` executable with no authentication. It
+stores raw provider JSON and a normalized US-023 artifact, then invokes the
+US-024 ingest boundary. Missing executables and provider command failures are
+`inconclusive`; malformed provider JSON is `fail`. Neither satisfies story
+governance.
 
 ## Future Command Contract
 

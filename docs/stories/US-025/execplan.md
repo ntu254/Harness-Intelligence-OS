@@ -46,13 +46,13 @@ Hard gates:
 
 ## Work Phases
 
-1. Confirm the available CodeGraph-compatible provider, invocation protocol,
-   authentication requirements, and deterministic fixture strategy.
-2. Define the narrow adapter command and response mapping.
-3. Implement provider invocation and typed normalization without SQLite access.
+1. Confirm CodeGraph CLI invocation, authentication, and response shape.
+2. Define `codegraph impact` with changed-files and symbol modes.
+3. Implement subprocess invocation and typed normalization without SQLite
+   access.
 4. Emit pass, fail, and inconclusive US-023 artifacts.
-5. Compose the generated artifact with US-024 ingest and context pack output.
-6. Add unit, integration, unavailable-provider, and platform tests.
+5. Compose generated artifacts with US-024 ingest and context pack output.
+6. Add checksum, unavailable-provider, invalid-output, and platform tests.
 7. Run architecture, trace, and story governance verification.
 
 ## Stop Conditions

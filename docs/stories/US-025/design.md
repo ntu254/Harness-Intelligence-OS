@@ -12,7 +12,8 @@ The adapter translates CodeGraph-compatible analysis into the existing
   provenance.
 - Impact summary, affected files, dependency edges, risk flags, and grounded
   claims for passing analysis.
-- Structured errors for deterministic failures.
+- Structured errors for malformed provider output or adapter validation
+  failures.
 - Structured unavailability for inconclusive analysis.
 
 Harness does not treat raw provider output as trusted context.
@@ -36,38 +37,45 @@ the only component allowed to map provider evidence into Harness state.
 
 ## Interface Contract
 
-The final CLI shape must:
+The accepted provider is CodeGraph CLI:
 
-- Accept a story id and output path.
-- Identify the repository and revision being analyzed.
-- Produce a `codegraph-impact` file even for fail or inconclusive outcomes.
-- Optionally invoke US-024 ingest as the next explicit step or as a documented
-  composed workflow.
-- Exit non-zero for fail and inconclusive outcomes.
+- Executable: `codegraph`.
+- Package: `@colbymchenry/codegraph`.
+- Authentication: none.
+- Project state: `.codegraph/`.
+- Initialization: `codegraph init .`.
+- Refresh: `codegraph sync .`.
+- Default provider invocation: `codegraph affected --stdin --json`.
+- Optional provider invocation: `codegraph impact <symbol> --depth <n> --json`.
 
-The exact provider transport, authentication, and command flags are resolved
-during implementation discovery from the real CodeGraph-compatible tool. Do
-not invent a provider protocol or couple it to SQLite.
+Harness exposes:
+
+```text
+harness-cli codegraph impact \
+  --story US-025 \
+  --mode changed-files \
+  --changed-files <path-list.txt> \
+  [--depth 5] \
+  [--output <artifact.json>] \
+  [--raw-output <provider-response.json>] \
+  [--executable codegraph]
+```
+
+Symbol mode replaces `--changed-files` with `--symbol <name>`.
+
+The command stores raw provider JSON, normalizes it into the US-023 artifact,
+and invokes US-024 ingestion. Missing executables, missing indexes, and
+non-zero provider exits are inconclusive. Malformed JSON and invalid provenance
+are fail. Both outcomes exit non-zero.
 
 ## Design Review
 
-Status: **Conditionally accepted**.
+Status: **Accepted / Implemented**.
 
-The artifact flow, ownership boundary, status semantics, and governance
-composition are accepted. Implementation may begin only after one real
-CodeGraph-compatible invocation boundary is identified with:
-
-- An executable, MCP tool, HTTP endpoint, or other callable interface.
-- Authentication and secret-handling requirements.
-- A response shape that can ground affected files, dependency edges, and
-  claims.
-- Provider unavailability and deterministic failure signals.
-- A repeatable test or fixture strategy.
-
-Workspace review on 2026-06-07 found no CodeGraph executable, environment
-configuration, MCP resource, connector, or deferred tool. US-025 therefore
-remains `planned`; a synthetic provider interface is not accepted as real
-CodeGraph evidence.
+CodeGraph CLI `0.9.9` was installed and its command help, source JSON shapes,
+local index, changed-files analysis, and symbol analysis were exercised.
+Windows npm `.cmd` shims are resolved explicitly before subprocess execution.
+The provider remains outside SQLite and US-024 remains the only ingestion path.
 
 ## Data Model
 
@@ -75,6 +83,8 @@ No schema migration is expected.
 
 Operational provider output and normalized artifacts remain files. US-024
 continues to own the existing `context_ingest` SQLite summary.
+
+`.codegraph/` is ignored as local provider state.
 
 ## UI / Platform Impact
 

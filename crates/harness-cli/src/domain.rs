@@ -12,6 +12,8 @@ pub enum ParseHarnessValueError {
     RiskLane(String),
     #[error("unknown context source '{0}'. Use: codegraph or notebooklm")]
     ContextSource(String),
+    #[error("unknown CodeGraph mode '{0}'. Use: changed-files or symbol")]
+    CodeGraphMode(String),
     #[error("{0} must be an integer")]
     Integer(String),
     #[error("{0} must be 0 or 1. Example: --unit 1 --integration 1 --e2e 0 --platform 0")]
@@ -475,6 +477,33 @@ pub fn normalize_token(value: &str) -> String {
 pub enum ContextSource {
     Codegraph,
     Notebooklm,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CodeGraphMode {
+    ChangedFiles,
+    Symbol,
+}
+
+impl CodeGraphMode {
+    pub fn as_cli_value(self) -> &'static str {
+        match self {
+            Self::ChangedFiles => "changed-files",
+            Self::Symbol => "symbol",
+        }
+    }
+}
+
+impl FromStr for CodeGraphMode {
+    type Err = ParseHarnessValueError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match normalize_token(value).as_str() {
+            "changed_files" | "affected" => Ok(Self::ChangedFiles),
+            "symbol" | "impact" => Ok(Self::Symbol),
+            _ => Err(ParseHarnessValueError::CodeGraphMode(value.to_owned())),
+        }
+    }
 }
 
 impl ContextSource {

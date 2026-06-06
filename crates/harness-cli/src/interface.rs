@@ -6,15 +6,15 @@ use clap::{Args, Parser, Subcommand};
 use thiserror::Error;
 
 use crate::application::{
-    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, ContextIngestInput,
-    DecisionAddInput, HarnessContext, HarnessService, InitResult, IntakeInput, MigrateResult,
-    QueryTable, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, TraceInput,
+    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, CodeGraphImpactInput,
+    ContextIngestInput, DecisionAddInput, HarnessContext, HarnessService, InitResult, IntakeInput,
+    MigrateResult, QueryTable, ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, TraceInput,
 };
 use crate::domain::{
     parse_optional_integer, path_has_any_segment, proof_display, BacklogFilter, BacklogRecord,
-    BoolFlag, ContextIngestStatus, ContextSource, CsvList, DecisionRecord, FrictionRecord,
-    HarnessStats, InputType, IntakeRecord, ReleaseCheckResult, RiskLane, StoryMatrixRecord,
-    TraceQualityTier, TraceRecord, TraceScoreResult, RISK_LANE_HELP,
+    BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList, DecisionRecord,
+    FrictionRecord, HarnessStats, InputType, IntakeRecord, ReleaseCheckResult, RiskLane,
+    StoryMatrixRecord, TraceQualityTier, TraceRecord, TraceScoreResult, RISK_LANE_HELP,
 };
 
 #[derive(Parser, Debug)]
@@ -50,6 +50,8 @@ enum Command {
     Query(QueryArgs),
     /// Generate a context pack for a story.
     Context(ContextArgs),
+    /// Produce and ingest CodeGraph impact evidence.
+    Codegraph(CodeGraphArgs),
     /// Check configured architecture dependency boundaries.
     ArchCheck(ArchCheckArgs),
     /// Verify the trusted public release distribution chain.
@@ -335,6 +337,42 @@ struct ContextIngestArgs {
 }
 
 #[derive(Args, Debug)]
+struct CodeGraphArgs {
+    #[command(subcommand)]
+    action: CodeGraphAction,
+}
+
+#[derive(Subcommand, Debug)]
+enum CodeGraphAction {
+    /// Run CodeGraph analysis, normalize the artifact, and ingest it.
+    Impact(CodeGraphImpactArgs),
+}
+
+#[derive(Args, Debug)]
+struct CodeGraphImpactArgs {
+    #[arg(long)]
+    story: String,
+    #[arg(
+        long,
+        value_name = "changed-files|symbol",
+        default_value = "changed-files"
+    )]
+    mode: String,
+    #[arg(long = "changed-files")]
+    changed_files: Option<PathBuf>,
+    #[arg(long)]
+    symbol: Option<String>,
+    #[arg(long, default_value = "2")]
+    depth: String,
+    #[arg(long)]
+    output: Option<PathBuf>,
+    #[arg(long = "raw-output")]
+    raw_output: Option<PathBuf>,
+    #[arg(long, default_value = "codegraph")]
+    executable: String,
+}
+
+#[derive(Args, Debug)]
 struct ArchCheckArgs {
     /// Architecture rules file. Defaults to harness-architecture.toml.
     #[arg(long)]
@@ -609,6 +647,51 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                 println!("Context pack generated successfully at {}", path.display());
             }
         }
+        Command::Codegraph(args) => match args.action {
+            CodeGraphAction::Impact(args) => {
+                let depth = args.depth.parse::<u32>().map_err(|_| {
+                    InterfaceError::ParseHarnessValue(
+                        crate::domain::ParseHarnessValueError::Integer(
+                            "codegraph impact: --depth".to_owned(),
+                        ),
+                    )
+                })?;
+                if !(1..=10).contains(&depth) {
+                    return Err(InterfaceError::ParseHarnessValue(
+                        crate::domain::ParseHarnessValueError::Integer(
+                            "codegraph impact: --depth must be between 1 and 10".to_owned(),
+                        ),
+                    ));
+                }
+                let result = service.produce_codegraph_impact(CodeGraphImpactInput {
+                    story_id: args.story,
+                    mode: CodeGraphMode::from_str(&args.mode)?,
+                    changed_files: args.changed_files,
+                    symbol: args.symbol,
+                    depth,
+                    output: args.output,
+                    raw_output: args.raw_output,
+                    executable: args.executable,
+                })?;
+                println!("Provider: codegraph-cli {}", result.provider_version);
+                println!("Command: {}", result.provider_command);
+                if let Some(path) = result.raw_output_path {
+                    println!("Raw response: {}", path.display());
+                }
+                println!("Artifact: {}", result.artifact_path.display());
+                println!("Ingest evidence: {}", result.ingest_report_path.display());
+                for diagnostic in &result.ingest_report.diagnostics {
+                    println!("Diagnostic {}: {}", diagnostic.code, diagnostic.message);
+                }
+                println!(
+                    "CodeGraph impact: {}",
+                    result.ingest_report.status.as_db_value()
+                );
+                if result.ingest_report.status != ContextIngestStatus::Pass {
+                    std::process::exit(1);
+                }
+            }
+        },
         Command::ArchCheck(args) => {
             let result = service.check_architecture(args.config, args.story.as_deref())?;
             println!("Architecture files scanned: {}", result.scanned_files);

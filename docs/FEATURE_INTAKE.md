@@ -83,6 +83,10 @@ result remain files; SQLite stores the governance summary. `fail` and
 evidence. The current `intake --auto` flags remain unchanged; live provider
 adapters and broader governance integration are separate stories.
 
+The CodeGraph CLI adapter is available through `harness-cli codegraph impact`.
+It preserves the file boundary and composes with `context ingest`; it does not
+change `intake --auto` defaults.
+
 ## Lanes
 
 ### Tiny

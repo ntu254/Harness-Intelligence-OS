@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use crate::domain::{
-    ArchitectureCheckResult, BacklogFilter, BacklogRecord, BoolFlag, ContextIngestReport,
-    ContextSource, CsvList, DecisionRecord, FrictionRecord, HarnessStats, InputType, IntakeRecord,
-    ReleaseVerificationReport, RiskLane, StoryGateResult, StoryMatrixRecord, StoryVerifyStatus,
-    TraceRecord, TraceScoreResult,
+    ArchitectureCheckResult, BacklogFilter, BacklogRecord, BoolFlag, CodeGraphMode,
+    ContextIngestReport, ContextSource, CsvList, DecisionRecord, FrictionRecord, HarnessStats,
+    InputType, IntakeRecord, ReleaseVerificationReport, RiskLane, StoryGateResult,
+    StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
 };
 use crate::infrastructure::{HarnessRepository, SqliteHarnessRepository};
 
@@ -66,6 +66,28 @@ pub struct ContextIngestInput {
     pub source: ContextSource,
     pub file: PathBuf,
     pub output: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub struct CodeGraphImpactInput {
+    pub story_id: String,
+    pub mode: CodeGraphMode,
+    pub changed_files: Option<PathBuf>,
+    pub symbol: Option<String>,
+    pub depth: u32,
+    pub output: Option<PathBuf>,
+    pub raw_output: Option<PathBuf>,
+    pub executable: String,
+}
+
+#[derive(Debug)]
+pub struct CodeGraphImpactResult {
+    pub artifact_path: PathBuf,
+    pub raw_output_path: Option<PathBuf>,
+    pub provider_version: String,
+    pub provider_command: String,
+    pub ingest_report_path: PathBuf,
+    pub ingest_report: ContextIngestReport,
 }
 
 #[derive(Debug)]
@@ -211,6 +233,13 @@ impl HarnessService {
         input: ContextIngestInput,
     ) -> crate::infrastructure::Result<(PathBuf, ContextIngestReport)> {
         self.repository.ingest_context(input)
+    }
+
+    pub fn produce_codegraph_impact(
+        &self,
+        input: CodeGraphImpactInput,
+    ) -> crate::infrastructure::Result<CodeGraphImpactResult> {
+        self.repository.produce_codegraph_impact(input)
     }
 
     pub fn check_architecture(
