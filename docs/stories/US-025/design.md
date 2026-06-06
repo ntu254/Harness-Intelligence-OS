@@ -49,6 +49,26 @@ The exact provider transport, authentication, and command flags are resolved
 during implementation discovery from the real CodeGraph-compatible tool. Do
 not invent a provider protocol or couple it to SQLite.
 
+## Design Review
+
+Status: **Conditionally accepted**.
+
+The artifact flow, ownership boundary, status semantics, and governance
+composition are accepted. Implementation may begin only after one real
+CodeGraph-compatible invocation boundary is identified with:
+
+- An executable, MCP tool, HTTP endpoint, or other callable interface.
+- Authentication and secret-handling requirements.
+- A response shape that can ground affected files, dependency edges, and
+  claims.
+- Provider unavailability and deterministic failure signals.
+- A repeatable test or fixture strategy.
+
+Workspace review on 2026-06-07 found no CodeGraph executable, environment
+configuration, MCP resource, connector, or deferred tool. US-025 therefore
+remains `planned`; a synthetic provider interface is not accepted as real
+CodeGraph evidence.
+
 ## Data Model
 
 No schema migration is expected.

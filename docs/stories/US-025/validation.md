@@ -78,3 +78,10 @@ Evidence is added after implementation and verification.
 - Planning trace: `#16`, Detailed `3/3`.
 - Decision 0010 remains the governing file-based boundary; no new decision or
   schema migration was introduced during planning.
+- Design review: conditionally accepted on 2026-06-07.
+- Provider discovery checked repository files, PATH commands, environment
+  variables, MCP resources/templates, and deferred tools. No callable
+  CodeGraph-compatible provider was available.
+- Story remains `planned`; implementation and governance verification are
+  intentionally pending until a real provider boundary is supplied.
+- Design review trace: `#17`, Detailed `3/3`, outcome `partial`.
