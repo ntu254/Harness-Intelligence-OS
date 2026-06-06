@@ -73,3 +73,26 @@ harness-cli story verify US-033
 - Local Windows release package built:
   `dist/harness-cli-windows-x64.exe` and `.sha256`.
 - Packaged Windows binary reports `harness-cli 0.5.0`.
+- GitHub release workflow `27074112377` passed:
+  - Verify job passed;
+  - 5 platform build jobs passed;
+  - Publish GitHub Release job passed.
+- Public release:
+  `https://github.com/ntu254/Harness-Intelligence-OS/releases/tag/harness-cli-v0.5.0`.
+- Public release assets: 10.
+- `harness-cli release verify --version 0.5.0 --story US-033` pass:
+  - release tag: `harness-cli-v0.5.0`;
+  - origin: `ntu254/Harness-Intelligence-OS`;
+  - platform: `windows-x64`;
+  - assets checked: 10;
+  - download: pass;
+  - checksum: pass;
+  - version: pass;
+  - smoke install: pass.
+- Release evidence file:
+  `.harness/release/harness-cli-v0.5.0-release-verify.json`.
+- `harness-cli context --story US-033` pass.
+- `harness-cli arch-check --story US-033` pass.
+- Detailed trace recorded: `#30`, score `3/3`.
+- `harness-cli story verify US-033` pass.
+- Story governance gate pass.
