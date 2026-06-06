@@ -51,4 +51,7 @@ scripts/bin/harness-cli story verify US-023
 - Existing Rust format, test, and clippy checks passed with 27 tests.
 - Decision 0010 verification and architecture check passed.
 - Context pack generated at `.harness/context/US-023-context.md`.
-- Trace and final story governance results are recorded at completion.
+- GitHub milestone
+  `HI-OS v0.4.0: Real MCP Adapter Layer` and issue `#1` track the initiative
+  and US-023.
+- Trace #13 achieved Detailed 3/3 and the final story governance gate passed.
