@@ -25,12 +25,12 @@ use crate::domain::{
     BacklogSuggestionRecord, CodeGraphMode, ContextIngestDiagnostic, ContextIngestGovernance,
     ContextIngestReport, ContextIngestStatus, ContextSource, ContextSourceArtifact, DecisionRecord,
     FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionType, GovernanceFrictionSummary,
-    GovernanceGateSummary, GovernanceProof, GovernanceReleaseSummary, GovernanceReport,
-    GovernanceRepository, GovernanceStoryRow, GovernanceStorySummary, GovernanceValidationCommand,
-    GovernanceValidationSummary, HarnessStats, IntakeRecord, MappedContext, ReleaseAssetEvidence,
-    ReleaseCheckResult, ReleaseConfig, ReleaseVerificationReport, RiskLane, RuleProposalRecord,
-    StoryGateResult, StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
-    TraceScoreSource,
+    GovernanceGateSummary, GovernanceMaturitySummary, GovernanceProof, GovernanceReleaseSummary,
+    GovernanceReport, GovernanceRepository, GovernanceStoryRow, GovernanceStorySummary,
+    GovernanceValidationCommand, GovernanceValidationSummary, HarnessStats, IntakeRecord,
+    MappedContext, ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig,
+    ReleaseVerificationReport, RiskLane, RuleProposalRecord, StoryGateResult, StoryMatrixRecord,
+    StoryVerifyStatus, TraceRecord, TraceScoreResult, TraceScoreSource,
 };
 
 pub type Result<T> = std::result::Result<T, HarnessInfraError>;
@@ -969,6 +969,12 @@ impl HarnessRepository for SqliteHarnessRepository {
         };
         let release_summary = governance_release_summary(&connection)?;
         let friction_summary = governance_friction_summary(&connection)?;
+        let maturity_summary = governance_maturity_summary(
+            &gate_summary,
+            &validation_summary,
+            &release_summary,
+            &friction_summary,
+        );
         let stories = governance_story_rows(&connection, &self.repo_root)?;
 
         let report = GovernanceReport {
@@ -982,6 +988,7 @@ impl HarnessRepository for SqliteHarnessRepository {
             validation_summary,
             release_summary,
             friction_summary,
+            maturity_summary,
             stories,
         };
 
@@ -2512,6 +2519,98 @@ fn governance_friction_summary(connection: &Connection) -> Result<GovernanceFric
             },
         )
         .map_err(HarnessInfraError::from)
+}
+
+fn governance_maturity_summary(
+    gate: &GovernanceGateSummary,
+    validation: &GovernanceValidationSummary,
+    release: &GovernanceReleaseSummary,
+    friction: &GovernanceFrictionSummary,
+) -> GovernanceMaturitySummary {
+    let gate_total = gate.pass + gate.fail + gate.not_run;
+    let gate_pass_percent = percent(gate.pass, gate_total);
+    let validation_total = validation.commands.len() as i64;
+    let validation_pass = validation
+        .commands
+        .iter()
+        .filter(|command| command.result == "pass")
+        .count() as i64;
+    let validation_pass_percent = percent(validation_pass, validation_total);
+    let release_verified = release.release_verify_result == "pass";
+
+    let gate_score = gate_pass_percent * 40 / 100;
+    let validation_score = validation_pass_percent * 25 / 100;
+    let release_score = match release.release_verify_result.as_str() {
+        "pass" => 20,
+        "inconclusive" => 10,
+        _ => 0,
+    };
+    let friction_penalty = (friction.high_severity * 5).min(15);
+    let friction_score = 15 - friction_penalty;
+    let score = (gate_score + validation_score + release_score + friction_score).clamp(0, 100);
+    let level = match score {
+        85..=100 => "trusted",
+        70..=84 => "managed",
+        50..=69 => "developing",
+        _ => "early",
+    }
+    .to_owned();
+    let open_governance_gaps = gate.fail
+        + gate.not_run
+        + (validation_total - validation_pass)
+        + if release_verified { 0 } else { 1 }
+        + friction.high_severity;
+    let mut notes = Vec::new();
+    if gate_total == 0 {
+        notes.push("No story gate results are available.".to_owned());
+    } else if gate.fail > 0 || gate.not_run > 0 {
+        notes.push(format!(
+            "{} story gate(s) failed and {} story gate(s) have not run.",
+            gate.fail, gate.not_run
+        ));
+    } else {
+        notes.push("All recorded story gates pass.".to_owned());
+    }
+    if validation_total == 0 {
+        notes.push("No validation commands are recorded.".to_owned());
+    } else if validation_pass != validation_total {
+        notes.push(format!(
+            "{} validation command(s) are not passing.",
+            validation_total - validation_pass
+        ));
+    } else {
+        notes.push("All recorded validation commands pass.".to_owned());
+    }
+    match release.release_verify_result.as_str() {
+        "pass" => notes.push("Release verification passed.".to_owned()),
+        "inconclusive" => notes.push("Release verification is inconclusive.".to_owned()),
+        "none" => notes.push("No release verification is recorded.".to_owned()),
+        _ => notes.push("Release verification is failing.".to_owned()),
+    }
+    if friction.high_severity > 0 {
+        notes.push(format!(
+            "{} high-severity friction event(s) are recorded.",
+            friction.high_severity
+        ));
+    }
+
+    GovernanceMaturitySummary {
+        score,
+        level,
+        gate_pass_percent,
+        validation_pass_percent,
+        release_verified,
+        open_governance_gaps,
+        notes,
+    }
+}
+
+fn percent(numerator: i64, denominator: i64) -> i64 {
+    if denominator <= 0 {
+        0
+    } else {
+        (numerator * 100 / denominator).clamp(0, 100)
+    }
 }
 
 fn governance_story_rows(
@@ -7454,12 +7553,16 @@ mod tests {
         assert_eq!(report.friction_summary.high_severity, 1);
         assert_eq!(report.friction_summary.open_backlog_suggestions, 1);
         assert_eq!(report.friction_summary.open_rule_proposals, 1);
+        assert!(report.maturity_summary.score <= 100);
+        assert!(report.maturity_summary.release_verified);
+        assert_eq!(report.maturity_summary.open_governance_gaps, 2);
         assert_eq!(report.validation_summary.commands[0].result, "pass");
         assert_eq!(report.stories[0].gate_result, "not_run");
         assert!(report.stories[0].missing_evidence.is_empty());
 
         let value = serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap()).unwrap();
         assert_eq!(value["schema_version"], "1.0.0");
+        assert_eq!(value["maturity_summary"]["release_verified"], true);
         assert_eq!(value["stories"][0]["proof"]["unit"], true);
 
         let stored_gate = connection
@@ -7470,6 +7573,51 @@ mod tests {
             )
             .unwrap();
         assert_eq!(stored_gate, None);
+    }
+
+    #[test]
+    fn governance_maturity_summary_scores_gaps_deterministically() {
+        let summary = governance_maturity_summary(
+            &GovernanceGateSummary {
+                pass: 8,
+                fail: 1,
+                not_run: 1,
+            },
+            &GovernanceValidationSummary {
+                commands: vec![
+                    GovernanceValidationCommand {
+                        command: "cargo test --workspace".to_owned(),
+                        result: "pass".to_owned(),
+                    },
+                    GovernanceValidationCommand {
+                        command: "release verify".to_owned(),
+                        result: "not_run".to_owned(),
+                    },
+                ],
+            },
+            &GovernanceReleaseSummary {
+                latest_version: Some("0.5.0".to_owned()),
+                release_verify_result: "inconclusive".to_owned(),
+                assets_checked: 10,
+            },
+            &GovernanceFrictionSummary {
+                events: 3,
+                high_severity: 2,
+                open_backlog_suggestions: 1,
+                open_rule_proposals: 1,
+            },
+        );
+
+        assert_eq!(summary.gate_pass_percent, 80);
+        assert_eq!(summary.validation_pass_percent, 50);
+        assert_eq!(summary.score, 59);
+        assert_eq!(summary.level, "developing");
+        assert!(!summary.release_verified);
+        assert_eq!(summary.open_governance_gaps, 6);
+        assert!(summary
+            .notes
+            .iter()
+            .any(|note| note.contains("inconclusive")));
     }
 
     #[test]

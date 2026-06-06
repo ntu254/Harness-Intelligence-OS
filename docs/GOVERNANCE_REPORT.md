@@ -38,7 +38,29 @@ A governance report captures:
 - validation command summary;
 - release verification summary;
 - friction and suggestion summary;
+- governance maturity summary;
 - story-level proof rows.
+
+## Maturity Summary
+
+US-036 adds `maturity_summary` to generated reports. The score is deterministic
+and integer-only:
+
+- story gate pass rate contributes up to 40 points;
+- validation command pass rate contributes up to 25 points;
+- release verification contributes up to 20 points;
+- low high-severity friction contributes up to 15 points.
+
+Levels are:
+
+- `trusted`: 85-100
+- `managed`: 70-84
+- `developing`: 50-69
+- `early`: 0-49
+
+The summary also records open governance gaps and explanatory notes. It does
+not change story status, gates, release proof, friction events, backlog, or
+policy.
 
 ## Guardrails
 

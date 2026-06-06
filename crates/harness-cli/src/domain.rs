@@ -598,6 +598,7 @@ pub struct GovernanceReport {
     pub validation_summary: GovernanceValidationSummary,
     pub release_summary: GovernanceReleaseSummary,
     pub friction_summary: GovernanceFrictionSummary,
+    pub maturity_summary: GovernanceMaturitySummary,
     pub stories: Vec<GovernanceStoryRow>,
 }
 
@@ -649,6 +650,17 @@ pub struct GovernanceFrictionSummary {
     pub high_severity: i64,
     pub open_backlog_suggestions: i64,
     pub open_rule_proposals: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct GovernanceMaturitySummary {
+    pub score: i64,
+    pub level: String,
+    pub gate_pass_percent: i64,
+    pub validation_pass_percent: i64,
+    pub release_verified: bool,
+    pub open_governance_gaps: i64,
+    pub notes: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

@@ -938,6 +938,10 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                     result.report.release_summary.release_verify_result
                 );
                 println!("Friction events: {}", result.report.friction_summary.events);
+                println!(
+                    "Maturity: {} ({})",
+                    result.report.maturity_summary.level, result.report.maturity_summary.score
+                );
             }
         },
         Command::Story(args) => match args.action {

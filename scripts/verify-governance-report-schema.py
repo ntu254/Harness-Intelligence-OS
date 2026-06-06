@@ -80,6 +80,15 @@ report = {
         "open_backlog_suggestions": 1,
         "open_rule_proposals": 1,
     },
+    "maturity_summary": {
+        "score": 85,
+        "level": "trusted",
+        "gate_pass_percent": 93,
+        "validation_pass_percent": 100,
+        "release_verified": True,
+        "open_governance_gaps": 2,
+        "notes": ["Release verification passed."],
+    },
     "stories": [
         {
             "story_id": "US-033",
@@ -119,6 +128,14 @@ expect_invalid(validator, invalid, "validation command cannot be warning")
 invalid = copy.deepcopy(report)
 invalid["story_summary"]["total"] = -1
 expect_invalid(validator, invalid, "negative count")
+
+invalid = copy.deepcopy(report)
+invalid["maturity_summary"]["score"] = 101
+expect_invalid(validator, invalid, "maturity score over 100")
+
+invalid = copy.deepcopy(report)
+invalid["maturity_summary"]["level"] = "perfect"
+expect_invalid(validator, invalid, "invalid maturity level")
 
 invalid = copy.deepcopy(report)
 invalid["stories"][0]["risk_lane"] = "urgent"

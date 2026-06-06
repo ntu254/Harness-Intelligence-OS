@@ -16,6 +16,7 @@
     "validation_summary",
     "release_summary",
     "friction_summary",
+    "maturity_summary",
     "stories"
   ],
   "properties": {
@@ -165,6 +166,51 @@
         }
       }
     },
+    "maturity_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "score",
+        "level",
+        "gate_pass_percent",
+        "validation_pass_percent",
+        "release_verified",
+        "open_governance_gaps",
+        "notes"
+      ],
+      "properties": {
+        "score": {
+          "$ref": "#/$defs/percent_integer"
+        },
+        "level": {
+          "enum": [
+            "early",
+            "developing",
+            "managed",
+            "trusted"
+          ]
+        },
+        "gate_pass_percent": {
+          "$ref": "#/$defs/percent_integer"
+        },
+        "validation_pass_percent": {
+          "$ref": "#/$defs/percent_integer"
+        },
+        "release_verified": {
+          "type": "boolean"
+        },
+        "open_governance_gaps": {
+          "$ref": "#/$defs/non_negative_integer"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "stories": {
       "type": "array",
       "items": {
@@ -176,6 +222,11 @@
     "non_negative_integer": {
       "type": "integer",
       "minimum": 0
+    },
+    "percent_integer": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
     },
     "validation_command": {
       "type": "object",
