@@ -11,11 +11,11 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::application::{
-    BacklogAddInput, BacklogCloseInput, BrownfieldImportResult, CodeGraphImpactInput,
-    CodeGraphImpactResult, ContextIngestInput, ContextIngestSummary, ContextPackData,
-    DecisionAddInput, DecisionVerifyResult, HarnessContext, InitResult, IntakeInput, MigrateResult,
-    NotebookBriefInput, NotebookBriefResult, QueryTable, ReleaseVerifyInput, StoryAddInput,
-    StoryUpdateInput, StoryVerifyResult, TraceInput,
+    AutoIntakeEvidence, BacklogAddInput, BacklogCloseInput, BrownfieldImportResult,
+    CodeGraphImpactInput, CodeGraphImpactResult, ContextIngestInput, ContextIngestSummary,
+    ContextPackData, DecisionAddInput, DecisionVerifyResult, HarnessContext, InitResult,
+    IntakeInput, MigrateResult, NotebookBriefInput, NotebookBriefResult, QueryTable,
+    ReleaseVerifyInput, StoryAddInput, StoryUpdateInput, StoryVerifyResult, TraceInput,
 };
 use crate::domain::{
     normalize_token, path_has_any_segment, score_trace, ArchitectureCheckResult,
@@ -92,6 +92,7 @@ pub trait HarnessRepository {
         input: ReleaseVerifyInput,
     ) -> Result<(PathBuf, ReleaseVerificationReport)>;
     fn ingest_context(&self, input: ContextIngestInput) -> Result<(PathBuf, ContextIngestReport)>;
+    fn auto_intake_evidence(&self, story_id: &str) -> Result<AutoIntakeEvidence>;
     fn produce_codegraph_impact(
         &self,
         input: CodeGraphImpactInput,
@@ -423,6 +424,51 @@ impl SqliteHarnessRepository {
         }
 
         Ok(imported)
+    }
+
+    fn latest_passing_mapped_context(
+        &self,
+        connection: &Connection,
+        story_id: &str,
+        source: ContextSource,
+    ) -> Result<Option<MappedContext>> {
+        let latest = connection
+            .query_row(
+                "SELECT result, report_path
+                 FROM context_ingest
+                 WHERE story_id=?1 AND source=?2
+                 ORDER BY id DESC
+                 LIMIT 1;",
+                params![story_id, source.as_db_value()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        let Some((result, report_path)) = latest else {
+            return Ok(None);
+        };
+        if result != ContextIngestStatus::Pass.as_db_value() {
+            return Ok(None);
+        }
+        let path = resolve_repo_path(&self.repo_root, &report_path);
+        let bytes = fs::read(&path).map_err(|error| {
+            HarnessInfraError::InvalidContextIngest(format!(
+                "passing {} ingest report '{}' cannot be read: {error}",
+                source.as_db_value(),
+                report_path
+            ))
+        })?;
+        let report =
+            serde_json::from_slice::<StoredContextIngestReport>(&bytes).map_err(|error| {
+                HarnessInfraError::InvalidContextIngest(format!(
+                    "passing {} ingest report '{}' is invalid: {error}",
+                    source.as_db_value(),
+                    report_path
+                ))
+            })?;
+        if report.status != ContextIngestStatus::Pass {
+            return Ok(None);
+        }
+        Ok(report.mapped_context)
     }
 }
 
@@ -978,6 +1024,31 @@ impl HarnessRepository for SqliteHarnessRepository {
         transaction.commit()?;
 
         Ok((output_path, report))
+    }
+
+    fn auto_intake_evidence(&self, story_id: &str) -> Result<AutoIntakeEvidence> {
+        let connection = self.open_existing()?;
+        let story_exists = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM story WHERE id=?1);",
+            params![story_id],
+            |row| row.get::<_, i64>(0),
+        )? == 1;
+        if !story_exists {
+            return Err(HarnessInfraError::StoryNotFound(story_id.to_owned()));
+        }
+
+        Ok(AutoIntakeEvidence {
+            codegraph: self.latest_passing_mapped_context(
+                &connection,
+                story_id,
+                ContextSource::Codegraph,
+            )?,
+            notebooklm: self.latest_passing_mapped_context(
+                &connection,
+                story_id,
+                ContextSource::Notebooklm,
+            )?,
+        })
     }
 
     fn produce_codegraph_impact(
@@ -1814,7 +1885,7 @@ impl HarnessRepository for SqliteHarnessRepository {
         };
         let mut ingest_statement = connection.prepare(
             "SELECT source, result, schema_version, artifact_path,
-                    artifact_sha256, summary, report_path, checked_at
+                    artifact_sha256, summary, report_path, failure, checked_at
              FROM context_ingest
              WHERE story_id=?1
                AND id IN (
@@ -1833,7 +1904,8 @@ impl HarnessRepository for SqliteHarnessRepository {
                     artifact_sha256: row.get(4)?,
                     summary: row.get(5)?,
                     report_path: row.get(6)?,
-                    checked_at: row.get(7)?,
+                    failure: row.get(7)?,
+                    checked_at: row.get(8)?,
                 })
             })?)?;
 
@@ -2294,6 +2366,12 @@ struct ContextArtifactValidation {
     summary: Option<String>,
     mapped_context: Option<MappedContext>,
     diagnostics: Vec<ContextIngestDiagnostic>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredContextIngestReport {
+    status: ContextIngestStatus,
+    mapped_context: Option<MappedContext>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -4371,6 +4449,15 @@ fn path_for_storage(repo_root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn resolve_repo_path(repo_root: &Path, path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() {
+        candidate
+    } else {
+        repo_root.join(candidate)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
@@ -4483,6 +4570,44 @@ mod tests {
             "unavailable": {
                 "reason": "provider_unavailable",
                 "retryable": true
+            }
+        })
+    }
+
+    fn passing_notebook_artifact(story_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "schema_version": "1.0.0",
+            "artifact_type": "notebooklm-brief",
+            "artifact_id": "33333333-3333-4333-8333-333333333333",
+            "story_id": story_id,
+            "status": "pass",
+            "generated_at": "2026-06-07T00:00:00Z",
+            "provenance": {
+                "provider": "notebooklm-mcp-cli",
+                "adapter": "test-adapter",
+                "adapter_version": "0.1.0",
+                "invocation_id": "run-3",
+                "sources": [{
+                    "source_id": "SRC-1",
+                    "title": "Feature intake",
+                    "uri": "docs/FEATURE_INTAKE.md",
+                    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "retrieved_at": "2026-06-07T00:00:00Z"
+                }]
+            },
+            "brief": {
+                "summary": "Auto intake must use validated NotebookLM context.",
+                "constraints": ["Inconclusive evidence never becomes pass."],
+                "open_questions": [],
+                "affected_docs": ["docs/FEATURE_INTAKE.md"],
+                "claims": [{
+                    "claim_id": "NL-1",
+                    "statement": "NotebookLM context must be citation-backed before intake uses it.",
+                    "citations": [{
+                        "source_id": "SRC-1",
+                        "locator": "MCP Artifact Boundary"
+                    }]
+                }]
             }
         })
     }
@@ -4762,6 +4887,107 @@ mod tests {
         assert!(gate
             .missing
             .contains(&"NotebookLM context ingest proof".to_owned()));
+    }
+
+    #[test]
+    fn auto_intake_evidence_reads_latest_passing_mapped_context_only() {
+        let (_temp_dir, repo_root, repository) = context_test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-AUTO", 0, 0);
+
+        let codegraph_path = repo_root.join("codegraph-impact.json");
+        fs::write(
+            &codegraph_path,
+            serde_json::to_vec_pretty(&passing_codegraph_artifact("US-AUTO")).unwrap(),
+        )
+        .unwrap();
+        repository
+            .ingest_context(ContextIngestInput {
+                story_id: "US-AUTO".to_owned(),
+                source: ContextSource::Codegraph,
+                file: codegraph_path,
+                output: None,
+            })
+            .unwrap();
+
+        let notebook_path = repo_root.join("notebooklm-brief.json");
+        fs::write(
+            &notebook_path,
+            serde_json::to_vec_pretty(&passing_notebook_artifact("US-AUTO")).unwrap(),
+        )
+        .unwrap();
+        repository
+            .ingest_context(ContextIngestInput {
+                story_id: "US-AUTO".to_owned(),
+                source: ContextSource::Notebooklm,
+                file: notebook_path,
+                output: None,
+            })
+            .unwrap();
+
+        let evidence = repository.auto_intake_evidence("US-AUTO").unwrap();
+        let codegraph = evidence.codegraph.unwrap();
+        assert_eq!(
+            codegraph.code_impact_summary.as_deref(),
+            Some("Context ingest changes the CLI trust boundary.")
+        );
+        assert!(codegraph
+            .risk_flags
+            .contains(&"external_systems".to_owned()));
+
+        let notebook = evidence.notebooklm.unwrap();
+        let grounded_context = notebook.grounded_context.as_deref().unwrap();
+        assert!(grounded_context.contains("Auto intake must use validated NotebookLM context."));
+        assert!(grounded_context
+            .contains("NL-1: NotebookLM context must be citation-backed before intake uses it."));
+        assert_eq!(
+            notebook.affected_docs,
+            vec!["docs/FEATURE_INTAKE.md".to_owned()]
+        );
+    }
+
+    #[test]
+    fn auto_intake_evidence_does_not_promote_inconclusive_context() {
+        let (_temp_dir, repo_root, repository) = context_test_repository();
+        repository.init().unwrap();
+        add_context_story_and_intake(&repository, "US-AUTO-INCONCLUSIVE", 0, 0);
+
+        let pass_path = repo_root.join("notebooklm-pass.json");
+        fs::write(
+            &pass_path,
+            serde_json::to_vec_pretty(&passing_notebook_artifact("US-AUTO-INCONCLUSIVE")).unwrap(),
+        )
+        .unwrap();
+        repository
+            .ingest_context(ContextIngestInput {
+                story_id: "US-AUTO-INCONCLUSIVE".to_owned(),
+                source: ContextSource::Notebooklm,
+                file: pass_path,
+                output: None,
+            })
+            .unwrap();
+
+        let artifact_path = repo_root.join("notebooklm-brief.json");
+        fs::write(
+            &artifact_path,
+            serde_json::to_vec_pretty(&inconclusive_notebook_artifact("US-AUTO-INCONCLUSIVE"))
+                .unwrap(),
+        )
+        .unwrap();
+        repository
+            .ingest_context(ContextIngestInput {
+                story_id: "US-AUTO-INCONCLUSIVE".to_owned(),
+                source: ContextSource::Notebooklm,
+                file: artifact_path,
+                output: None,
+            })
+            .unwrap();
+
+        let evidence = repository
+            .auto_intake_evidence("US-AUTO-INCONCLUSIVE")
+            .unwrap();
+        assert!(evidence.codegraph.is_none());
+        assert!(evidence.notebooklm.is_none());
     }
 
     #[test]

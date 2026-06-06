@@ -119,6 +119,13 @@ ingestion. Harness never stores Google credentials, cookies, browser profiles,
 tokens, or provider session files. Missing provider/session/network/notebook
 is inconclusive; malformed or uncited output fails.
 
+US-027 connects validated evidence back into auto intake. When `harness-cli
+intake --auto --story <id>` runs, it prefers the latest passing CodeGraph and
+NotebookLM ingest reports for that story before falling back to ad hoc
+`--impact-report` or `--business-context` inputs. Failed and inconclusive
+evidence stays visible for audit and governance but never seeds intake as
+passing context.
+
 This separation keeps policy docs stable and human-readable while giving agents
 a structured, queryable record of operational state. It also prepares the
 harness for future observability and automated evolution without adding more

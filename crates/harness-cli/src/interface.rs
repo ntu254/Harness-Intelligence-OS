@@ -14,8 +14,8 @@ use crate::application::{
 use crate::domain::{
     parse_optional_integer, path_has_any_segment, proof_display, BacklogFilter, BacklogRecord,
     BoolFlag, CodeGraphMode, ContextIngestStatus, ContextSource, CsvList, DecisionRecord,
-    FrictionRecord, HarnessStats, InputType, IntakeRecord, ReleaseCheckResult, RiskLane,
-    StoryMatrixRecord, TraceQualityTier, TraceRecord, TraceScoreResult, RISK_LANE_HELP,
+    FrictionRecord, HarnessStats, InputType, IntakeRecord, MappedContext, ReleaseCheckResult,
+    RiskLane, StoryMatrixRecord, TraceQualityTier, TraceRecord, TraceScoreResult, RISK_LANE_HELP,
 };
 
 #[derive(Parser, Debug)]
@@ -486,11 +486,41 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
             let mut grounded_context = None;
 
             if args.auto {
-                let report_content = if let Some(path_or_json) = &args.impact_report {
-                    if std::path::Path::new(path_or_json).exists() {
-                        std::fs::read_to_string(path_or_json).ok()
+                let mut has_ingested_codegraph = false;
+                let mut has_ingested_notebooklm = false;
+                if let Some(story_id) = &args.story {
+                    let evidence = service.auto_intake_evidence(story_id)?;
+                    if let Some(mapped) = evidence.codegraph {
+                        merge_mapped_context_for_auto_intake(
+                            &mapped,
+                            &mut flags,
+                            &mut affected_docs,
+                            &mut code_impact_summary,
+                            &mut grounded_context,
+                        );
+                        has_ingested_codegraph = true;
+                    }
+                    if let Some(mapped) = evidence.notebooklm {
+                        merge_mapped_context_for_auto_intake(
+                            &mapped,
+                            &mut flags,
+                            &mut affected_docs,
+                            &mut code_impact_summary,
+                            &mut grounded_context,
+                        );
+                        has_ingested_notebooklm = true;
+                    }
+                }
+
+                let report_content = if !has_ingested_codegraph {
+                    if let Some(path_or_json) = &args.impact_report {
+                        if std::path::Path::new(path_or_json).exists() {
+                            std::fs::read_to_string(path_or_json).ok()
+                        } else {
+                            Some(path_or_json.clone())
+                        }
                     } else {
-                        Some(path_or_json.clone())
+                        None
                     }
                 } else {
                     None
@@ -507,63 +537,23 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                     }
 
                     for flag in report.risk_flags {
-                        let flag = crate::domain::normalize_token(&flag);
-                        if !flag.is_empty() && !flags.contains(&flag) {
-                            flags.push(flag);
-                        }
+                        merge_flag(&mut flags, &flag);
                     }
 
                     for file in report.affected_files {
-                        let file_lower = file.to_lowercase();
-                        if path_has_any_segment(
-                            &file_lower,
-                            &["auth", "authentication", "login", "session", "jwt"],
-                        ) {
-                            if !flags.contains(&"auth".to_owned()) {
-                                flags.push("auth".to_owned());
-                            }
-                            if !flags.contains(&"authorization".to_owned()) {
-                                flags.push("authorization".to_owned());
-                            }
-                        }
-                        if path_has_any_segment(
-                            &file_lower,
-                            &[
-                                "db",
-                                "database",
-                                "migration",
-                                "migrations",
-                                "schema",
-                                "sql",
-                                "prisma",
-                            ],
-                        ) && !flags.contains(&"data_model".to_owned())
-                        {
-                            flags.push("data_model".to_owned());
-                        }
-                        if path_has_any_segment(
-                            &file_lower,
-                            &["route", "routes", "controller", "controllers", "dto", "api"],
-                        ) && !flags.contains(&"public_contracts".to_owned())
-                        {
-                            flags.push("public_contracts".to_owned());
-                        }
-                        if path_has_any_segment(&file_lower, &["audit", "security", "privacy"])
-                            && !flags.contains(&"audit_security".to_owned())
-                        {
-                            flags.push("audit_security".to_owned());
-                        }
-                        if file_lower.ends_with(".md") && file_lower.contains("docs/") {
-                            affected_docs.push(file);
-                        }
+                        merge_affected_file_for_auto_intake(&file, &mut flags, &mut affected_docs);
                     }
                 }
 
-                let brief_content = if let Some(path_or_text) = &args.business_context {
-                    if std::path::Path::new(path_or_text).exists() {
-                        std::fs::read_to_string(path_or_text).ok()
+                let brief_content = if !has_ingested_notebooklm {
+                    if let Some(path_or_text) = &args.business_context {
+                        if std::path::Path::new(path_or_text).exists() {
+                            std::fs::read_to_string(path_or_text).ok()
+                        } else {
+                            Some(path_or_text.clone())
+                        }
                     } else {
-                        Some(path_or_text.clone())
+                        None
                     }
                 } else {
                     None
@@ -1082,6 +1072,85 @@ fn parse_optional_bool(
         .map_err(InterfaceError::from)
 }
 
+fn merge_mapped_context_for_auto_intake(
+    mapped: &MappedContext,
+    flags: &mut Vec<String>,
+    affected_docs: &mut Vec<String>,
+    code_impact_summary: &mut Option<String>,
+    grounded_context: &mut Option<String>,
+) {
+    for flag in &mapped.risk_flags {
+        merge_flag(flags, flag);
+    }
+    for file in &mapped.affected_files {
+        merge_affected_file_for_auto_intake(file, flags, affected_docs);
+    }
+    for doc in &mapped.affected_docs {
+        merge_doc(affected_docs, doc);
+    }
+    if let Some(summary) = &mapped.code_impact_summary {
+        *code_impact_summary = Some(summary.clone());
+    }
+    if let Some(context) = &mapped.grounded_context {
+        *grounded_context = Some(context.clone());
+    }
+}
+
+fn merge_flag(flags: &mut Vec<String>, flag: &str) {
+    let flag = crate::domain::normalize_token(flag);
+    if !flag.is_empty() && !flags.contains(&flag) {
+        flags.push(flag);
+    }
+}
+
+fn merge_doc(affected_docs: &mut Vec<String>, doc: &str) {
+    let doc = doc.trim();
+    if !doc.is_empty() && !affected_docs.iter().any(|existing| existing == doc) {
+        affected_docs.push(doc.to_owned());
+    }
+}
+
+fn merge_affected_file_for_auto_intake(
+    file: &str,
+    flags: &mut Vec<String>,
+    affected_docs: &mut Vec<String>,
+) {
+    let file_lower = file.to_lowercase();
+    if path_has_any_segment(
+        &file_lower,
+        &["auth", "authentication", "login", "session", "jwt"],
+    ) {
+        merge_flag(flags, "auth");
+        merge_flag(flags, "authorization");
+    }
+    if path_has_any_segment(
+        &file_lower,
+        &[
+            "db",
+            "database",
+            "migration",
+            "migrations",
+            "schema",
+            "sql",
+            "prisma",
+        ],
+    ) {
+        merge_flag(flags, "data_model");
+    }
+    if path_has_any_segment(
+        &file_lower,
+        &["route", "routes", "controller", "controllers", "dto", "api"],
+    ) {
+        merge_flag(flags, "public_contracts");
+    }
+    if path_has_any_segment(&file_lower, &["audit", "security", "privacy"]) {
+        merge_flag(flags, "audit_security");
+    }
+    if file_lower.ends_with(".md") && file_lower.contains("docs/") {
+        merge_doc(affected_docs, file);
+    }
+}
+
 fn print_init_result(result: InitResult) {
     match result {
         InitResult::Created { db_path } => {
@@ -1509,5 +1578,45 @@ mod tests {
         );
         assert!(parse_impact_report("{not json").is_err());
         assert!(parse_impact_report(r#"{"affected_files":"src/auth/login.ts"}"#).is_err());
+    }
+
+    #[test]
+    fn auto_intake_merge_uses_mapped_context_flags_docs_and_grounding() {
+        let mapped = MappedContext {
+            risk_flags: vec!["external_systems".to_owned()],
+            affected_files: vec![
+                "src/auth/session.rs".to_owned(),
+                "docs/FEATURE_INTAKE.md".to_owned(),
+            ],
+            affected_docs: vec!["docs/HARNESS.md".to_owned()],
+            code_impact_summary: Some("CodeGraph summary".to_owned()),
+            grounded_context: Some("NotebookLM grounded context".to_owned()),
+            claim_ids: vec!["CG-1".to_owned(), "NL-1".to_owned()],
+        };
+        let mut flags = Vec::new();
+        let mut docs = Vec::new();
+        let mut impact = None;
+        let mut grounded = None;
+
+        merge_mapped_context_for_auto_intake(
+            &mapped,
+            &mut flags,
+            &mut docs,
+            &mut impact,
+            &mut grounded,
+        );
+
+        assert!(flags.contains(&"external_systems".to_owned()));
+        assert!(flags.contains(&"auth".to_owned()));
+        assert!(flags.contains(&"authorization".to_owned()));
+        assert_eq!(
+            docs,
+            vec![
+                "docs/FEATURE_INTAKE.md".to_owned(),
+                "docs/HARNESS.md".to_owned()
+            ]
+        );
+        assert_eq!(impact.as_deref(), Some("CodeGraph summary"));
+        assert_eq!(grounded.as_deref(), Some("NotebookLM grounded context"));
     }
 }

@@ -94,6 +94,15 @@ artifact, and composes with `context ingest`. Provider/session/network
 unavailability is inconclusive, while uncited summaries or malformed provider
 output fail and cannot satisfy governance.
 
+When `intake --auto --story <id>` runs after context evidence has been ingested,
+Harness prefers the latest passing CodeGraph and NotebookLM `context_ingest`
+reports for that story. Passing CodeGraph evidence can seed risk flags,
+affected docs, and code impact summary; passing NotebookLM evidence can seed
+affected docs and grounded context. Failed or inconclusive evidence remains
+audit-visible but never seeds intake as proof. Missing required evidence is
+blocked by story governance rather than by intake creation, avoiding a circular
+bootstrap between intake and `context ingest`.
+
 ## Lanes
 
 ### Tiny

@@ -561,18 +561,24 @@ pub struct ContextSourceArtifact {
     pub sha256: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MappedContext {
+    #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub risk_flags: Vec<String>,
+    #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub affected_files: Vec<String>,
+    #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub affected_docs: Vec<String>,
+    #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_impact_summary: Option<String>,
+    #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub grounded_context: Option<String>,
+    #[serde(default)]
     pub claim_ids: Vec<String>,
 }
 

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::domain::{
     ArchitectureCheckResult, BacklogFilter, BacklogRecord, BoolFlag, CodeGraphMode,
     ContextIngestReport, ContextSource, CsvList, DecisionRecord, FrictionRecord, HarnessStats,
-    InputType, IntakeRecord, ReleaseVerificationReport, RiskLane, StoryGateResult,
+    InputType, IntakeRecord, MappedContext, ReleaseVerificationReport, RiskLane, StoryGateResult,
     StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult,
 };
 use crate::infrastructure::{HarnessRepository, SqliteHarnessRepository};
@@ -57,6 +57,7 @@ pub struct ContextIngestSummary {
     pub artifact_sha256: String,
     pub summary: Option<String>,
     pub report_path: String,
+    pub failure: Option<String>,
     pub checked_at: String,
 }
 
@@ -66,6 +67,12 @@ pub struct ContextIngestInput {
     pub source: ContextSource,
     pub file: PathBuf,
     pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Default)]
+pub struct AutoIntakeEvidence {
+    pub codegraph: Option<MappedContext>,
+    pub notebooklm: Option<MappedContext>,
 }
 
 #[derive(Debug)]
@@ -255,6 +262,13 @@ impl HarnessService {
         self.repository.ingest_context(input)
     }
 
+    pub fn auto_intake_evidence(
+        &self,
+        story_id: &str,
+    ) -> crate::infrastructure::Result<AutoIntakeEvidence> {
+        self.repository.auto_intake_evidence(story_id)
+    }
+
     pub fn produce_codegraph_impact(
         &self,
         input: CodeGraphImpactInput,
@@ -437,6 +451,9 @@ impl HarnessService {
                 ));
                 if let Some(summary) = &ingest.summary {
                     markdown.push_str(&format!("    * Summary: {}\n", summary));
+                }
+                if let Some(failure) = &ingest.failure {
+                    markdown.push_str(&format!("    * Diagnostics: {}\n", failure));
                 }
             }
         }
