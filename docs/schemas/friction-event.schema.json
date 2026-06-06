@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ntu254/Harness-Intelligence-OS/blob/main/docs/schemas/friction-event.schema.json",
+  "title": "HI-OS Friction Event",
+  "description": "Versioned event contract for recurring Harness friction observed in traces, reviews, workflows, and provider runs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "event_id",
+    "friction_type",
+    "severity",
+    "source",
+    "summary",
+    "observed_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "artifact_type": {
+      "const": "friction-event"
+    },
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "story_id": {
+      "type": "string",
+      "pattern": "^US-[0-9]{3,}$"
+    },
+    "trace_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "friction_type": {
+      "enum": [
+        "missing_context",
+        "ambiguous_policy",
+        "weak_validation",
+        "provider_unavailable",
+        "schema_gap",
+        "release_gap",
+        "architecture_rule_gap",
+        "repeated_manual_step"
+      ]
+    },
+    "severity": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "source": {
+      "enum": [
+        "trace",
+        "agent",
+        "review",
+        "workflow",
+        "provider"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1
+    },
+    "affected_paths": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "artifact_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "report_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "trace_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "details": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "proposed_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_type"
+      ],
+      "properties": {
+        "action_type": {
+          "enum": [
+            "backlog",
+            "rule_proposal",
+            "docs_update",
+            "provider_preflight",
+            "none"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_path": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "friction_type": {
+            "const": "provider_unavailable"
+          }
+        },
+        "required": [
+          "friction_type"
+        ]
+      },
+      "then": {
+        "required": [
+          "provider"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "severity": {
+            "const": "high"
+          }
+        },
+        "required": [
+          "severity"
+        ]
+      },
+      "then": {
+        "required": [
+          "evidence"
+        ]
+      }
+    }
+  ]
+}

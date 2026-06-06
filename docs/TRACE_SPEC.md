@@ -116,6 +116,11 @@ Populate `harness_friction` when any of these occur:
 - A requested change was out of scope but likely important later.
 - A benchmark or review failure could not be attributed to a component.
 
+For recurring friction, use `docs/FRICTION_TAXONOMY.md` as the vocabulary.
+Trace `harness_friction` remains human-readable free text until structured
+capture is implemented, but the taxonomy should guide type names and follow-up
+work.
+
 How to write friction:
 
 - Name the concrete pain, not a vague mood.

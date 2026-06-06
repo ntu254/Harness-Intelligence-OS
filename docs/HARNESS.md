@@ -253,6 +253,10 @@ patterns can be queried later:
 scripts/bin/harness-cli query friction
 ```
 
+Use `docs/FRICTION_TAXONOMY.md` when classifying recurring friction for
+learning-loop work. The taxonomy gives names to repeated pain, but it does not
+automatically change policy or convert inconclusive evidence into pass.
+
 Backlog risk uses the same lane vocabulary as intake and stories:
 `tiny`, `normal`, or `high-risk`. Use `--risk tiny` for low-risk follow-up
 items; `low` is not a valid lane.
