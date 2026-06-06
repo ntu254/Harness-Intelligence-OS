@@ -2,7 +2,7 @@
 
 ## Status
 
-in_progress
+implemented
 
 ## Lane
 
@@ -26,11 +26,11 @@ contract.
 - [x] Official JavaScript actions use Node.js 24-compatible major versions.
 - [x] No Node.js 20-only official action remains in the release workflow.
 - [x] The workflow opts into Node.js 24 before the hosted-runner default switch.
-- [ ] A dispatch run passes verification and all five platform builds.
-- [ ] The run produces five binaries and five SHA256 workflow artifacts.
-- [ ] A clean installer smoke still passes against public v0.3.0.
-- [ ] `release verify --version 0.3.0` still passes.
-- [ ] The story governance gate and required trace pass.
+- [x] A dispatch run passes verification and all five platform builds.
+- [x] The run produces five binaries and five SHA256 workflow artifacts.
+- [x] A clean installer smoke still passes against public v0.3.0.
+- [x] `release verify --version 0.3.0` still passes.
+- [x] The story governance gate and required trace pass.
 
 ## Design Notes
 
@@ -70,5 +70,20 @@ from silently restoring Node.js 20-only official action versions.
 
 - GitHub action manifests declare Node.js 24 for checkout v6,
   upload-artifact v7, and download-artifact v8.
-- Runtime workflow, artifact, installer, release verification, governance, and
-  trace evidence will be added after the dispatch run completes.
+- GitHub Actions run
+  `https://github.com/ntu254/Harness-Intelligence-OS/actions/runs/27068932009`
+  passed its verification job and all five platform build jobs on commit
+  `b60dd6f`.
+- The run used `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` and emitted no Node.js
+  20 deprecation annotation.
+- The publish job was skipped because the dispatch supplied no release tag.
+- Five workflow artifact bundles contained exactly five binaries and five
+  SHA256 files.
+- `cargo fmt --check`, 27 Rust tests, `cargo clippy -- -D warnings`, installer
+  syntax checks, and the repository-local Node.js 24 verifier passed.
+- A clean public Windows install downloaded and checksum-verified
+  `harness-cli 0.3.0`.
+- `release verify --version 0.3.0` passed all ten public release assets,
+  download, SHA256, version, and smoke checks.
+- Architecture check, Trace #12 Detailed 3/3, and the final story governance
+  gate passed.
