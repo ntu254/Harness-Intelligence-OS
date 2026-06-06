@@ -17,6 +17,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   verify:
@@ -24,7 +25,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -39,6 +40,10 @@ jobs:
         run: |
           bash -n scripts/install-harness.sh
           bash -n scripts/build-harness-cli-release.sh
+
+      - name: Check Node.js 24 action readiness
+        shell: pwsh
+        run: .github/scripts/verify-node24-actions.ps1
 
   build:
     name: Build ${{ matrix.platform }}
@@ -70,7 +75,7 @@ jobs:
             binary: harness-cli-windows-x64.exe
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -91,7 +96,7 @@ jobs:
           "dist/${{ matrix.binary }}" release verify --help
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: harness-cli-${{ matrix.platform }}
           path: |
@@ -109,10 +114,10 @@ jobs:
       RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
     steps:
       - name: Checkout release notes
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: harness-cli-*
           merge-multiple: true
