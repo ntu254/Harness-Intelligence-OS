@@ -1,4 +1,4 @@
--- Harness v0 schema - migration 006
+-- HI-OS schema - migration 006
 -- Validated external intelligence artifact ingestion.
 
 ALTER TABLE story ADD COLUMN codegraph_ingest_required INTEGER NOT NULL DEFAULT 0

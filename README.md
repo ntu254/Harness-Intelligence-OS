@@ -283,6 +283,7 @@ docs/examples/                    end-to-end example workflows
 docs/troubleshooting.md           installer, provider, gate, and dashboard fixes
 docs/COMMAND_COOKBOOK.md          grouped command examples
 docs/demo/                        example transformation from idea to story
+docs/archive/                     historical phase plans and early specs
 docs/stories/                     story packets and validation evidence
 docs/decisions/                   durable decisions
 docs/schemas/                     artifact and report schemas

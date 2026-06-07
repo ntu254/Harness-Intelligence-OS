@@ -54,9 +54,9 @@ Every task has two possible outputs:
 2. Harness delta: docs, templates, validation expectations, backlog items, or
    decision records that make the next task easier.
 
-## Harness v0 Scope
+## HI-OS Scope
 
-Harness v0 includes:
+HI-OS includes:
 
 - Agent entrypoint.
 - Empty product documentation structure.
@@ -68,7 +68,7 @@ Harness v0 includes:
 - Harness growth backlog.
 - Durable layer: SQLite database and CLI for operational records.
 
-Harness v0 deliberately excludes:
+HI-OS deliberately excludes:
 
 - A project-specific `SPEC.md`.
 - Pre-sliced product domains.
@@ -184,7 +184,7 @@ product docs plus executable tests become the living contract.
 
 ## Spec Lifecycle
 
-Harness v0 starts without a tracked project spec. When the human provides a
+HI-OS starts without a tracked project spec. When the human provides a
 specification, treat it as input material, not as a permanent operating manual.
 Use it to populate product docs, story packets, architecture decisions, and
 validation expectations during the first buildout.

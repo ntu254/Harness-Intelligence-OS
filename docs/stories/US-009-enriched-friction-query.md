@@ -15,7 +15,7 @@ linked intake record alongside each friction entry.
 
 ## Relevant Product Docs
 
-- `PHASE3.md`
+- `docs/archive/phases/PHASE3.md`
 - `docs/TRACE_SPEC.md`
 - `docs/HARNESS_COMPONENTS.md`
 

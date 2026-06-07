@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: install-harness.sh [options] [path]
 
-Apply the Harness v0 files and folders to a target project directory.
+Apply the HI-OS operating files and folders to a target project directory.
 
 Options:
   -d, --directory <path>  Target directory. Defaults to the current directory.
@@ -14,7 +14,7 @@ Options:
                          place and install only missing Harness files.
       --refresh-agent-shim
                          Refresh an existing AGENTS.md into the small Harness
-                         shim after backing it up. Old Harness-generated files
+                         shim after backing it up. Old generated Harness files
                          are replaced; custom files receive a marked block.
       --claude           Also install or refresh CLAUDE.md so Claude Code
                          auto-loads the harness context. Claude Code never
@@ -765,7 +765,7 @@ if [ -z "$CLI_BASE_URL" ]; then
 fi
 
 if [ "$YES" -eq 0 ] && can_prompt; then
-  prompt_tty "Install Harness v0 into [$TARGET_INPUT]: "
+  prompt_tty "Install HI-OS into [$TARGET_INPUT]: "
   REPLY_TARGET="$(read_tty)"
   if [ -n "$REPLY_TARGET" ]; then
     TARGET_INPUT="$REPLY_TARGET"

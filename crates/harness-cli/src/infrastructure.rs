@@ -8037,7 +8037,7 @@ Testing brownfield import
 
 ### Current Pain
 
-Existing Harness v0 repos have markdown truth.
+Existing HI-OS repos can have markdown truth.
 
 ### Suggested Improvement
 
@@ -8227,7 +8227,9 @@ implemented
                 friction: Some("none".to_owned()),
                 notes: None,
                 actions: CsvList::from_optional(Some("read,patched".to_owned())),
-                files_read: CsvList::from_optional(Some("PHASE3.md".to_owned())),
+                files_read: CsvList::from_optional(Some(
+                    "docs/archive/phases/PHASE3.md".to_owned(),
+                )),
                 files_changed: CsvList::from_optional(Some(
                     "crates/harness-cli/src/domain.rs".to_owned(),
                 )),

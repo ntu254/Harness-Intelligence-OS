@@ -1,7 +1,7 @@
 # Documentation Map
 
-This directory holds the project harness and any product contract derived from a
-future user-provided spec.
+This directory holds HI-OS operating docs, adoption guides, governance records,
+and any product contract derived from a future user-provided spec.
 
 ## Main Files
 
@@ -31,11 +31,13 @@ future user-provided spec.
   clean clone path.
 - `examples/`: end-to-end workflows that show intake, context, validation,
   trace, story gate, and dashboard evidence together.
+- `archive/`: historical phase plans and early specs kept for provenance, not
+  current operating policy.
 - `templates/`: reusable spec-intake, story, plan, decision, and validation
   formats.
 
 ## Current State
 
-Harness v0 exists before implementation. These docs define how the project will
-grow; they do not imply that app code, tests, CI, or deployment automation exist
-yet.
+HI-OS is the active repository operating layer. Current behavior is defined by
+the live docs, decisions, schemas, story packets, CLI code, and validation
+evidence; archived plans are historical context only.

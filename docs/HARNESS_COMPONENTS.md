@@ -1,8 +1,7 @@
 # Harness Components
 
-This taxonomy maps the current `repository-harness` repository to two
-component frameworks used by Phase 2 and updated by Phase 3 active
-observability work:
+This taxonomy maps the current HI-OS repository to two component frameworks
+first used during Phase 2 and updated by later active observability work:
 
 - Runtime Substrate responsibilities: the 11 responsibility areas the harness
   should cover.
@@ -47,8 +46,8 @@ Status values:
 
 ## File Inventory
 
-Every tracked project file plus the Phase 2 input file is mapped to at least
-one Runtime Substrate responsibility.
+Tracked project files, including archived phase plans that still provide
+provenance, are mapped to at least one Runtime Substrate responsibility.
 
 | File | Primary Responsibility | Secondary Responsibilities |
 | --- | --- | --- |
@@ -58,9 +57,10 @@ one Runtime Substrate responsibility.
 | `CONTRIBUTING.md` | Intervention recording | Project memory |
 | `Cargo.toml` | Tool access | Verification |
 | `Cargo.lock` | Tool access | Verification |
-| `PHASE2.md` | Task specification | Observability, context selection |
-| `PHASE3.md` | Task specification | Observability, verification, entropy auditing |
-| `PHASE4.md` | Task specification | Verification, observability, task state |
+| `docs/archive/phases/PHASE2.md` | Task specification | Observability, context selection |
+| `docs/archive/phases/PHASE3.md` | Task specification | Observability, verification, entropy auditing |
+| `docs/archive/phases/PHASE4.md` | Task specification | Verification, observability, task state |
+| `docs/archive/specs/harness_intelligence_os_spec.md` | Task specification | Project memory |
 | `crates/harness-cli/Cargo.toml` | Tool access | Verification |
 | `crates/harness-cli/src/main.rs` | Tool access | Tool implementation |
 | `crates/harness-cli/src/domain.rs` | Tool access | Task state, verification |

@@ -1,4 +1,4 @@
--- Harness v0 schema - migration 005
+-- HI-OS schema - migration 005
 -- Trusted distribution release verification evidence.
 
 ALTER TABLE story ADD COLUMN release_proof_required INTEGER NOT NULL DEFAULT 0

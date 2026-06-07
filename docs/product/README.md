@@ -1,6 +1,7 @@
 # Product Docs
 
-This directory is intentionally generic and mostly empty in Harness v0.
+This directory is intentionally generic and mostly empty until a product spec is
+accepted.
 
 When a user provides a project spec, derive smaller product contract files here
 instead of keeping one large spec as the living plan. Name files by the product

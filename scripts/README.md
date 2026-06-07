@@ -92,14 +92,14 @@ scripts/bin/harness-cli release verify ...
 ```
 
 `scripts/bin/harness-cli import brownfield` seeds or refreshes the durable database
-from existing Harness v0 markdown in `docs/TEST_MATRIX.md`,
+from existing HI-OS markdown in `docs/TEST_MATRIX.md`,
 `docs/decisions/`, and `docs/HARNESS_BACKLOG.md`. This keeps already-installed
 Harness repos on the Rust CLI path without losing their populated operating
 docs.
 
 ## Installer
 
-The upstream installer applies the Harness v0 operating files and folder
+The upstream installer applies the HI-OS operating files and folder
 structure to a target project directory. It defaults to the current directory,
 accepts a target path, and asks interactive users whether to `1. Merge`,
 `2. Override`, or `3. Stop` when the target already contains `AGENTS.md`,
@@ -137,7 +137,7 @@ curl -fsSL "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/mai
 ```
 
 `--refresh-agent-shim` backs up `AGENTS.md` before changing it. If the existing
-file is recognized as the old Harness-generated operating guide, the installer
+file is recognized as the old generated operating guide, the installer
 replaces it with the current shim. Otherwise it appends or replaces only the
 marked `<!-- HARNESS:BEGIN -->` block so project-specific instructions remain
 in place.

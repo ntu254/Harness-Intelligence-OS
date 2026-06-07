@@ -1121,7 +1121,7 @@ mod tests {
         let mut standard_source = trace_source();
         standard_source.agent = Some("codex".to_owned());
         standard_source.actions_taken = Some("[\"read\",\"patched\"]".to_owned());
-        standard_source.files_read = Some("[\"PHASE3.md\"]".to_owned());
+        standard_source.files_read = Some("[\"docs/archive/phases/PHASE3.md\"]".to_owned());
         standard_source.files_changed = Some("[\"docs/TRACE_SPEC.md\"]".to_owned());
         standard_source.harness_friction = Some("none".to_owned());
         let standard = score_trace(standard_source);
@@ -1130,7 +1130,7 @@ mod tests {
         let mut detailed_source = trace_source();
         detailed_source.agent = Some("codex".to_owned());
         detailed_source.actions_taken = Some("[\"read\",\"patched\"]".to_owned());
-        detailed_source.files_read = Some("[\"PHASE3.md\"]".to_owned());
+        detailed_source.files_read = Some("[\"docs/archive/phases/PHASE3.md\"]".to_owned());
         detailed_source.files_changed = Some("[\"docs/TRACE_SPEC.md\"]".to_owned());
         detailed_source.decisions_made = Some("[\"kept schema unchanged\"]".to_owned());
         detailed_source.errors = Some("[\"none\"]".to_owned());
@@ -1147,7 +1147,7 @@ mod tests {
         source.risk_lane = Some("high_risk".to_owned());
         source.agent = Some("codex".to_owned());
         source.actions_taken = Some("[\"read\",\"patched\"]".to_owned());
-        source.files_read = Some("[\"PHASE3.md\"]".to_owned());
+        source.files_read = Some("[\"docs/archive/phases/PHASE3.md\"]".to_owned());
         source.files_changed = Some("[\"docs/TRACE_SPEC.md\"]".to_owned());
         source.harness_friction = Some("none".to_owned());
 

@@ -1,4 +1,4 @@
--- Harness v0 schema - migration 007
+-- HI-OS schema - migration 007
 -- Durable structured friction events for the HI-OS v0.5 learning loop.
 
 CREATE TABLE friction_event (

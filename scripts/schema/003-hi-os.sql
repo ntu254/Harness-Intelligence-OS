@@ -1,4 +1,4 @@
--- Harness v0 schema - migration 003
+-- HI-OS schema - migration 003
 -- Harness Intelligence OS additions.
 
 -- Extends intake with impact data from CodeGraph and semantic context from NotebookLM

@@ -1,7 +1,7 @@
 # Harness Maturity Ladder
 
-This ladder defines how `repository-harness` should progress from static
-agent instructions to measurable harness improvement.
+This ladder defines how HI-OS progresses from static agent instructions to
+measurable repository governance.
 
 The levels are intentionally verifiable. A level is achieved only when its
 criteria can be inspected in repository files, durable Harness records, or

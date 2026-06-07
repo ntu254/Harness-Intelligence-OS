@@ -42,6 +42,7 @@ def main() -> int:
     readme = read("README.md")
     docs_readme = read("docs/README.md")
     scripts_readme = read("scripts/README.md")
+    archive_readme = read("docs/archive/README.md")
 
     readme_needles = [
         "# Harness Intelligence OS",
@@ -61,6 +62,7 @@ def main() -> int:
         "docs/agents/cursor.md",
         "docs/troubleshooting.md",
         "docs/COMMAND_COOKBOOK.md",
+        "docs/archive/",
         "release verify --version 0.6.0",
         "Governance Dashboard",
         "CodeGraph",
@@ -214,6 +216,9 @@ def main() -> int:
     require(docs_readme, "troubleshooting.md", "docs/README.md")
     require(docs_readme, "COMMAND_COOKBOOK.md", "docs/README.md")
     require(docs_readme, "hios.toml", "docs/README.md")
+    require(docs_readme, "archive/", "docs/README.md")
+    require(archive_readme, "historical planning documents", "docs/archive/README.md")
+    require(archive_readme, "not the current operating entrypoint", "docs/archive/README.md")
     require(scripts_readme, "harness-cli identity", "scripts/README.md")
     require(scripts_readme, "hios.toml", "scripts/README.md")
     require(agents_text, "Codex", "docs/agents/*")

@@ -2,7 +2,7 @@
 
 ## Scope
 
-Phase 2 is docs-only observability and taxonomy work from `PHASE2.md`.
+Phase 2 is docs-only observability and taxonomy work from `docs/archive/phases/PHASE2.md`.
 
 Allowed changes:
 

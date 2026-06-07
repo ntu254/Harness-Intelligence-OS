@@ -1,7 +1,7 @@
 # Harness Demo Walkthrough
 
-This walkthrough shows the kind of transformation Harness v0 is designed to
-support. It is an example only. It is not an accepted product contract for this
+This walkthrough shows the kind of transformation HI-OS is designed to support.
+It is an example only. It is not an accepted product contract for this
 repository.
 
 ## Input
@@ -16,8 +16,7 @@ teammates, change status, and see what is overdue.
 Without a harness, an agent might jump directly into framework selection,
 database schema, UI scaffolding, and tests all at once.
 
-Harness v0 asks the agent to slow the work down just enough to make it
-inspectable.
+HI-OS asks the agent to slow the work down just enough to make it inspectable.
 
 ## Intake
 
@@ -131,7 +130,7 @@ version needs a predictable state model.
 Only after the contract, story, and proof shape are clear should implementation
 begin.
 
-For Harness v0, that distinction matters. This repository deliberately does not
+For HI-OS, that distinction matters. This repository deliberately does not
 ship with application folders, package scripts, CI, or test commands. Those
 should arrive only when a real story selects a real stack and needs them.
 

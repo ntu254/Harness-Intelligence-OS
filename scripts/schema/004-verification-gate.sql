@@ -1,4 +1,4 @@
--- Harness v0 schema - migration 004
+-- HI-OS schema - migration 004
 -- HI-OS v0.2 architecture and story governance gate evidence.
 
 ALTER TABLE intake ADD COLUMN auto_generated INTEGER NOT NULL DEFAULT 0;
