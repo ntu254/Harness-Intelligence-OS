@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate adoption docs contain the README and walkthrough contracts."""
+"""Validate adoption docs contain the README, walkthrough, and example contracts."""
 
 from __future__ import annotations
 
@@ -25,6 +25,8 @@ def require(text: str, needle: str, path: str) -> None:
 def main() -> int:
     walkthrough_path = "docs/adoption/clean-clone-walkthrough.md"
     walkthrough = read(walkthrough_path)
+    example_path = "docs/examples/full-agent-workflow.md"
+    example = read(example_path)
     readme = read("README.md")
     docs_readme = read("docs/README.md")
     scripts_readme = read("scripts/README.md")
@@ -38,6 +40,7 @@ def main() -> int:
         "trace",
         "governance dashboard",
         "docs/adoption/clean-clone-walkthrough.md",
+        "docs/examples/full-agent-workflow.md",
         "release verify --version 0.6.0",
         "Governance Dashboard",
         "CodeGraph",
@@ -77,12 +80,42 @@ def main() -> int:
     for needle in walkthrough_needles:
         require(walkthrough, needle, walkthrough_path)
 
+    example_needles = [
+        "# Full Agent Workflow Example",
+        "US-EXAMPLE",
+        "intake",
+        "story add",
+        "Optional Provider Context",
+        "codegraph impact",
+        "notebooklm brief",
+        "context --story US-EXAMPLE",
+        "cargo test --workspace",
+        "story update",
+        "trace",
+        "story verify US-EXAMPLE",
+        "governance report",
+        "governance dashboard",
+        "Expected output",
+        "Provider Troubleshooting",
+        "CodeGraph Unavailable",
+        "NotebookLM Auth Or Session Missing",
+        "Context ingest: inconclusive",
+        "Context ingest: fail",
+        "Google credentials",
+        "provider session files",
+    ]
+
+    for needle in example_needles:
+        require(example, needle, example_path)
+
     require(
         readme,
         "docs/adoption/clean-clone-walkthrough.md",
         "README.md",
     )
+    require(readme, "docs/examples/full-agent-workflow.md", "README.md")
     require(docs_readme, "adoption/", "docs/README.md")
+    require(docs_readme, "examples/", "docs/README.md")
     require(
         scripts_readme,
         "python scripts/verify-adoption-docs.py",

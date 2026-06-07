@@ -253,6 +253,7 @@ docs/FEATURE_INTAKE.md            risk lanes and intake rules
 docs/ARCHITECTURE.md              architecture boundary rules
 docs/CONTEXT_RULES.md             what agents should read and when
 docs/adoption/                    first-run adoption walkthroughs
+docs/examples/                    end-to-end example workflows
 docs/demo/                        example transformation from idea to story
 docs/stories/                     story packets and validation evidence
 docs/decisions/                   durable decisions
@@ -264,6 +265,10 @@ scripts/README.md                 command and installer details
 For source-clone setup of this repo, start here:
 
 - `docs/adoption/clean-clone-walkthrough.md`
+
+For a complete agent workflow example, read:
+
+- `docs/examples/full-agent-workflow.md`
 
 For command details, use:
 

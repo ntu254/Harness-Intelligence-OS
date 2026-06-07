@@ -23,6 +23,8 @@ future user-provided spec.
   into agent-ready work.
 - `adoption/`: first-run and user-adoption walkthroughs, starting with the
   clean clone path.
+- `examples/`: end-to-end workflows that show intake, context, validation,
+  trace, story gate, and dashboard evidence together.
 - `templates/`: reusable spec-intake, story, plan, decision, and validation
   formats.
 
