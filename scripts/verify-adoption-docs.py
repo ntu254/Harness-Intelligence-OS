@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate adoption docs contain the README, walkthrough, and example contracts."""
+"""Validate adoption docs contain adoption and agent instruction contracts."""
 
 from __future__ import annotations
 
@@ -27,6 +27,14 @@ def main() -> int:
     walkthrough = read(walkthrough_path)
     example_path = "docs/examples/full-agent-workflow.md"
     example = read(example_path)
+    agent_paths = [
+        "docs/agents/codex.md",
+        "docs/agents/claude-code.md",
+        "docs/agents/cursor.md",
+    ]
+    agents = {path: read(path) for path in agent_paths}
+    agents_text = "\n".join(agents.values())
+    agents_index = read("AGENTS.md")
     readme = read("README.md")
     docs_readme = read("docs/README.md")
     scripts_readme = read("scripts/README.md")
@@ -41,6 +49,9 @@ def main() -> int:
         "governance dashboard",
         "docs/adoption/clean-clone-walkthrough.md",
         "docs/examples/full-agent-workflow.md",
+        "docs/agents/codex.md",
+        "docs/agents/claude-code.md",
+        "docs/agents/cursor.md",
         "release verify --version 0.6.0",
         "Governance Dashboard",
         "CodeGraph",
@@ -108,6 +119,25 @@ def main() -> int:
     for needle in example_needles:
         require(example, needle, example_path)
 
+    for path, text in agents.items():
+        agent_needles = [
+            "Startup Checklist",
+            "context --story US-XXX",
+            "Do not code before",
+            "story verify",
+            "inconclusive",
+            "pass",
+            "Google credentials",
+            "provider session files",
+            "Verification Discipline",
+        ]
+        for needle in agent_needles:
+            require(text, needle, path)
+
+    for path in agent_paths:
+        require(readme, path, "README.md")
+        require(agents_index, path, "AGENTS.md")
+
     require(
         readme,
         "docs/adoption/clean-clone-walkthrough.md",
@@ -116,6 +146,10 @@ def main() -> int:
     require(readme, "docs/examples/full-agent-workflow.md", "README.md")
     require(docs_readme, "adoption/", "docs/README.md")
     require(docs_readme, "examples/", "docs/README.md")
+    require(docs_readme, "agents/", "docs/README.md")
+    require(agents_text, "Codex", "docs/agents/*")
+    require(agents_text, "Claude Code", "docs/agents/*")
+    require(agents_text, "Cursor", "docs/agents/*")
     require(
         scripts_readme,
         "python scripts/verify-adoption-docs.py",

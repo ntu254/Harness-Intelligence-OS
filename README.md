@@ -252,6 +252,7 @@ docs/HARNESS.md                   human-agent operating model
 docs/FEATURE_INTAKE.md            risk lanes and intake rules
 docs/ARCHITECTURE.md              architecture boundary rules
 docs/CONTEXT_RULES.md             what agents should read and when
+docs/agents/                      Cursor, Claude Code, and Codex packs
 docs/adoption/                    first-run adoption walkthroughs
 docs/examples/                    end-to-end example workflows
 docs/demo/                        example transformation from idea to story
@@ -269,6 +270,12 @@ For source-clone setup of this repo, start here:
 For a complete agent workflow example, read:
 
 - `docs/examples/full-agent-workflow.md`
+
+For agent-specific operating notes, read:
+
+- `docs/agents/codex.md`
+- `docs/agents/claude-code.md`
+- `docs/agents/cursor.md`
 
 For command details, use:
 

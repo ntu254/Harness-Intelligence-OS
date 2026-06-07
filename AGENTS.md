@@ -16,4 +16,10 @@ This repo uses Harness. Before work, read:
 
 Use the Rust Harness CLI at `scripts/bin/harness-cli` on macOS/Linux or
 `scripts/bin/harness-cli.exe` on Windows as the main operational tool.
+
+Agent-specific packs:
+
+- `docs/agents/codex.md`
+- `docs/agents/claude-code.md`
+- `docs/agents/cursor.md`
 <!-- HARNESS:END -->

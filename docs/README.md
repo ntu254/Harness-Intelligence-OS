@@ -19,6 +19,7 @@ future user-provided spec.
 - `product/`: current product truth, empty until a spec is derived.
 - `stories/`: feature packets and backlog.
 - `decisions/`: durable decisions and tradeoffs.
+- `agents/`: tool-specific operating packs for Codex, Claude Code, and Cursor.
 - `demo/`: concrete walkthroughs that show how the harness transforms input
   into agent-ready work.
 - `adoption/`: first-run and user-adoption walkthroughs, starting with the
