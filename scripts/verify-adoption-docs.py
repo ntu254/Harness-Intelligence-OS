@@ -36,6 +36,8 @@ def main() -> int:
     agents_text = "\n".join(agents.values())
     troubleshooting_path = "docs/troubleshooting.md"
     troubleshooting = read(troubleshooting_path)
+    cookbook_path = "docs/COMMAND_COOKBOOK.md"
+    cookbook = read(cookbook_path)
     agents_index = read("AGENTS.md")
     readme = read("README.md")
     docs_readme = read("docs/README.md")
@@ -55,6 +57,7 @@ def main() -> int:
         "docs/agents/claude-code.md",
         "docs/agents/cursor.md",
         "docs/troubleshooting.md",
+        "docs/COMMAND_COOKBOOK.md",
         "release verify --version 0.6.0",
         "Governance Dashboard",
         "CodeGraph",
@@ -166,6 +169,33 @@ def main() -> int:
     for needle in troubleshooting_needles:
         require(troubleshooting, needle, troubleshooting_path)
 
+    cookbook_needles = [
+        "# Command Cookbook",
+        "## Intake",
+        "## Context",
+        "## Verify",
+        "## Trace",
+        "## Release",
+        "## Dashboard",
+        "## MCP / Provider Evidence",
+        "harness-cli intake",
+        "harness-cli context --story",
+        "harness-cli story verify",
+        "harness-cli trace",
+        "release verify --version 0.6.0",
+        "governance report",
+        "governance dashboard",
+        "codegraph impact",
+        "notebooklm brief",
+        "inconclusive",
+        "Google credentials",
+        "provider session files",
+        ".\\scripts\\bin\\harness-cli.exe",
+    ]
+
+    for needle in cookbook_needles:
+        require(cookbook, needle, cookbook_path)
+
     require(
         readme,
         "docs/adoption/clean-clone-walkthrough.md",
@@ -173,10 +203,12 @@ def main() -> int:
     )
     require(readme, "docs/examples/full-agent-workflow.md", "README.md")
     require(readme, "docs/troubleshooting.md", "README.md")
+    require(readme, "docs/COMMAND_COOKBOOK.md", "README.md")
     require(docs_readme, "adoption/", "docs/README.md")
     require(docs_readme, "examples/", "docs/README.md")
     require(docs_readme, "agents/", "docs/README.md")
     require(docs_readme, "troubleshooting.md", "docs/README.md")
+    require(docs_readme, "COMMAND_COOKBOOK.md", "docs/README.md")
     require(agents_text, "Codex", "docs/agents/*")
     require(agents_text, "Claude Code", "docs/agents/*")
     require(agents_text, "Cursor", "docs/agents/*")

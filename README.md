@@ -256,6 +256,7 @@ docs/agents/                      Cursor, Claude Code, and Codex packs
 docs/adoption/                    first-run adoption walkthroughs
 docs/examples/                    end-to-end example workflows
 docs/troubleshooting.md           installer, provider, gate, and dashboard fixes
+docs/COMMAND_COOKBOOK.md          grouped command examples
 docs/demo/                        example transformation from idea to story
 docs/stories/                     story packets and validation evidence
 docs/decisions/                   durable decisions
@@ -281,6 +282,10 @@ For agent-specific operating notes, read:
 For common failures and recovery steps, read:
 
 - `docs/troubleshooting.md`
+
+For grouped command examples, read:
+
+- `docs/COMMAND_COOKBOOK.md`
 
 For command details, use:
 
