@@ -819,6 +819,7 @@ done <<'EOF'
 AGENTS.md
 README.md
 docs/ARCHITECTURE.md
+docs/COMMAND_COOKBOOK.md
 docs/CONTEXT_RULES.md
 docs/FEATURE_INTAKE.md
 docs/GLOSSARY.md
@@ -831,6 +832,10 @@ docs/GOVERNANCE_REPORT.md
 docs/README.md
 docs/TEST_MATRIX.md
 docs/TRACE_SPEC.md
+docs/adoption/clean-clone-walkthrough.md
+docs/agents/claude-code.md
+docs/agents/codex.md
+docs/agents/cursor.md
 docs/decisions/0001-harness-first-development.md
 docs/decisions/0002-post-spec-product-lifecycle.md
 docs/decisions/0003-generic-spec-intake-harness.md
@@ -843,7 +848,10 @@ docs/decisions/0009-release-verification-evidence-storage.md
 docs/decisions/0010-mcp-artifact-contracts.md
 docs/decisions/0011-harness-friction-taxonomy.md
 docs/decisions/0012-governance-report-schema.md
+docs/decisions/0013-hi-os-sovereign-identity.md
+docs/decisions/0014-production-clean-distribution-boundary.md
 docs/decisions/README.md
+docs/examples/full-agent-workflow.md
 docs/product/README.md
 docs/schemas/codegraph-impact.schema.json
 docs/schemas/context-ingest-result.schema.json
@@ -860,8 +868,12 @@ docs/templates/high-risk-story/design.md
 docs/templates/high-risk-story/execplan.md
 docs/templates/high-risk-story/overview.md
 docs/templates/high-risk-story/validation.md
+docs/troubleshooting.md
 scripts/README.md
+scripts/verify-adoption-docs.py
+scripts/verify-friction-taxonomy.py
 scripts/verify-governance-report-schema.py
+scripts/verify-mcp-artifact-contracts.py
 scripts/schema/001-init.sql
 scripts/schema/002-story-verify.sql
 scripts/schema/003-hi-os.sql

@@ -1,5 +1,33 @@
 # Clean Clone Walkthrough
 
+> Production users do not need the full development clone. HI-OS release
+> hardening publishes a production-clean ZIP built from
+> `packaging/production-include.toml`. This walkthrough remains the maintainer
+> path for validating a source clone.
+
+## Production Payload Path
+
+Maintainers can build and verify the same platform-neutral payload that release
+hardening publishes:
+
+```bash
+bash scripts/build-production-payload.sh --version 0.7.0
+python scripts/verify-production-payload.py --version 0.7.0 --source-check
+```
+
+On Windows PowerShell:
+
+```powershell
+.\scripts\build-production-payload.ps1 -Version 0.7.0
+python scripts/verify-production-payload.py --version 0.7.0 --source-check
+```
+
+Extract `dist/hios-production-v0.7.0.zip`, enter its single root directory,
+then run the packaged installer against an empty project. The installer copies
+the operating contract and downloads the platform CLI from the trusted release
+asset chain. The ZIP deliberately excludes Rust source, story history, local
+databases, `.harness/`, `target/`, and `spec.md`.
+
 This walkthrough proves the first useful Harness loop from a clean clone:
 
 ```text
@@ -312,4 +340,3 @@ Do not commit:
 - `target/`;
 - `dist/`;
 - downloaded `scripts/bin/harness-cli` binaries.
-

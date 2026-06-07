@@ -18,6 +18,7 @@ and any product contract derived from a future user-provided spec.
 - `troubleshooting.md`: recovery steps for installer, release verification,
   provider, governance gate, and dashboard failures.
 - Root `hios.toml`: tracked HI-OS product identity and default public origin.
+- Root `packaging/production-include.toml`: production-clean ZIP contract.
 
 ## Folders
 

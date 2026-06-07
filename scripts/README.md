@@ -158,6 +158,38 @@ branch installs receive the trusted-distribution CLI. Set
 directory, such as a local `file:///.../dist` directory created by
 `scripts/build-harness-cli-release.sh`.
 
+## Production-Clean Payload
+
+Build the platform-neutral production payload:
+
+```bash
+bash scripts/build-production-payload.sh --version 0.7.0
+```
+
+```powershell
+.\scripts\build-production-payload.ps1 -Version 0.7.0
+```
+
+Both entrypoints call the same Python implementation and produce:
+
+```text
+dist/hios-production-v0.7.0.zip
+dist/hios-production-v0.7.0.zip.sha256
+```
+
+Verify the external checksum, internal file hashes, required files, forbidden
+paths, and exact source bytes:
+
+```bash
+python scripts/verify-production-payload.py --version 0.7.0 --source-check
+```
+
+The contract lives in `packaging/production-include.toml`. The payload excludes
+Rust source, historical story packets, archived plans, local databases,
+`.harness/`, CodeGraph indexes, build output, and `spec.md`. It does not embed a
+platform binary; the packaged installer obtains the CLI through the trusted
+release asset chain.
+
 ## Schema Migrations
 
 Migration files live under `scripts/schema/` and are named `NNN-description.sql`

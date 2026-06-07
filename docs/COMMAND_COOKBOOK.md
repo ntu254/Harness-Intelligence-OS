@@ -226,6 +226,23 @@ scripts/bin/harness-cli query friction
 
 ## Release
 
+Build and verify the production-clean distribution payload:
+
+```bash
+bash scripts/build-production-payload.sh --version 0.7.0
+python scripts/verify-production-payload.py --version 0.7.0 --source-check
+```
+
+On Windows PowerShell:
+
+```powershell
+.\scripts\build-production-payload.ps1 -Version 0.7.0
+python scripts/verify-production-payload.py --version 0.7.0 --source-check
+```
+
+The output is `dist/hios-production-v0.7.0.zip` plus its `.sha256` asset.
+Publishing those files remains part of release hardening.
+
 Verify a public CLI release:
 
 ```bash

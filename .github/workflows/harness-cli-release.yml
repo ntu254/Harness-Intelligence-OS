@@ -40,6 +40,14 @@ jobs:
         run: |
           bash -n scripts/install-harness.sh
           bash -n scripts/build-harness-cli-release.sh
+          bash -n scripts/build-production-payload.sh
+
+      - name: Check production payload tooling
+        run: |
+          python -m py_compile \
+            scripts/production_payload_lib.py \
+            scripts/build-production-payload.py \
+            scripts/verify-production-payload.py
 
       - name: Check Node.js 24 action readiness
         shell: pwsh

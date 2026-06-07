@@ -99,6 +99,18 @@ The installer copies the Harness docs and downloads the trusted prebuilt CLI to
 `scripts/bin/harness-cli` on macOS/Linux or `scripts/bin/harness-cli.exe` on
 Windows.
 
+For production distribution, HI-OS also builds a platform-neutral payload ZIP.
+It contains the installer source and operating contract without Rust source,
+historical story packets, archived plans, or runtime evidence:
+
+```bash
+bash scripts/build-production-payload.sh --version 0.7.0
+python scripts/verify-production-payload.py --version 0.7.0 --source-check
+```
+
+The generated ZIP and SHA256 live under `dist/`. Public release upload remains
+part of release hardening.
+
 ### 2. Initialize The Local Harness Database
 
 ```bash
@@ -287,6 +299,7 @@ docs/archive/                     historical phase plans and early specs
 docs/stories/                     story packets and validation evidence
 docs/decisions/                   durable decisions
 docs/schemas/                     artifact and report schemas
+packaging/production-include.toml production payload contract
 scripts/bin/harness-cli           installed CLI path in target projects
 scripts/README.md                 command and installer details
 ```

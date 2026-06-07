@@ -42,7 +42,13 @@ def main() -> int:
     readme = read("README.md")
     docs_readme = read("docs/README.md")
     scripts_readme = read("scripts/README.md")
-    archive_readme = read("docs/archive/README.md")
+    archive_path = ROOT / "docs/archive/README.md"
+    archive_readme = (
+        archive_path.read_text(encoding="utf-8") if archive_path.exists() else None
+    )
+    source_has_packaging_tooling = (
+        ROOT / "scripts/build-production-payload.py"
+    ).exists()
 
     readme_needles = [
         "# Harness Intelligence OS",
@@ -71,6 +77,9 @@ def main() -> int:
         "Google credentials",
         "ntu254/Harness-Intelligence-OS",
         "v0.7: Adoption Ready",
+        "build-production-payload.sh --version 0.7.0",
+        "verify-production-payload.py --version 0.7.0 --source-check",
+        "packaging/production-include.toml",
     ]
 
     for needle in readme_needles:
@@ -97,6 +106,9 @@ def main() -> int:
         ".harness/",
         "Do not commit",
         "Google credentials",
+        "Production Payload Path",
+        "hios-production-v0.7.0.zip",
+        "spec.md",
     ]
 
     for needle in walkthrough_needles:
@@ -197,6 +209,9 @@ def main() -> int:
         "Google credentials",
         "provider session files",
         ".\\scripts\\bin\\harness-cli.exe",
+        "build-production-payload.sh --version 0.7.0",
+        "verify-production-payload.py --version 0.7.0 --source-check",
+        "hios-production-v0.7.0.zip",
     ]
 
     for needle in cookbook_needles:
@@ -217,10 +232,49 @@ def main() -> int:
     require(docs_readme, "COMMAND_COOKBOOK.md", "docs/README.md")
     require(docs_readme, "hios.toml", "docs/README.md")
     require(docs_readme, "archive/", "docs/README.md")
-    require(archive_readme, "historical planning documents", "docs/archive/README.md")
-    require(archive_readme, "not the current operating entrypoint", "docs/archive/README.md")
+    if archive_readme is not None:
+        require(
+            archive_readme,
+            "historical planning documents",
+            "docs/archive/README.md",
+        )
+        require(
+            archive_readme,
+            "not the current operating entrypoint",
+            "docs/archive/README.md",
+        )
     require(scripts_readme, "harness-cli identity", "scripts/README.md")
     require(scripts_readme, "hios.toml", "scripts/README.md")
+    require(scripts_readme, "Production-Clean Payload", "scripts/README.md")
+    require(
+        scripts_readme,
+        "packaging/production-include.toml",
+        "scripts/README.md",
+    )
+    if source_has_packaging_tooling:
+        production_contract = read("packaging/production-include.toml")
+        production_builder = read("scripts/build-production-payload.py")
+        production_verifier = read("scripts/verify-production-payload.py")
+        require(
+            production_contract,
+            'name = "hios-production"',
+            "packaging/production-include.toml",
+        )
+        require(
+            production_contract,
+            '"spec.md"',
+            "packaging/production-include.toml",
+        )
+        require(
+            production_builder,
+            "write_archive",
+            "scripts/build-production-payload.py",
+        )
+        require(
+            production_verifier,
+            "source-check",
+            "scripts/verify-production-payload.py",
+        )
     require(agents_text, "Codex", "docs/agents/*")
     require(agents_text, "Claude Code", "docs/agents/*")
     require(agents_text, "Cursor", "docs/agents/*")
