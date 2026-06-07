@@ -97,10 +97,7 @@ Design-review evidence:
   `provenance.sources[]` and `brief.claims[].citations[]`.
 - NotebookLM summaries without claim-level citations are not grounded evidence.
 
-Implementation evidence is added after provider invocation, adapter generation,
-US-024 ingest, context pack rendering, and story governance verification.
-
-Implementation evidence recorded so far:
+Implementation evidence:
 
 - Story moved to In Progress after provider contract acceptance.
 - CLI command added: `harness-cli notebooklm brief`.
@@ -122,7 +119,7 @@ Implementation evidence recorded so far:
   `citations`, `references`) normalizes into a schema-valid passing
   `notebooklm-brief` artifact in tests.
 - Validation ladder passes locally: `cargo fmt --check`, `cargo test
-  --workspace` with 42 tests, `cargo clippy --workspace --all-targets -- -D
+  --workspace` with 49 tests, `cargo clippy --workspace --all-targets -- -D
   warnings`, `python scripts/verify-mcp-artifact-contracts.py`, and release
   build.
 - Local smoke with missing executable produced inconclusive evidence at
@@ -130,14 +127,24 @@ Implementation evidence recorded so far:
   `.harness/context/US-026-notebooklm-ingest-result.json`.
 - `notebooklm-mcp-cli` `0.7.1` was installed locally and provides `nlm` plus
   `notebooklm-mcp`.
-- `nlm login --check` reports that the default profile is missing, so live
-  NotebookLM proof and final story gate remain intentionally unclaimed until a
-  provider profile and notebook are available.
-- Real provider smoke writes schema-valid inconclusive evidence because
-  `nlm query notebook --json --timeout 120 hios-provider-proof <question>`
-  returns `Error: Profile 'default' not found. Run 'nlm login' first.`.
-- `harness-cli story verify US-026` now records mechanical verification pass
-  and governance gate fail with only `NotebookLM context ingest proof` missing.
+- `nlm login --check` passes after provider-managed login outside Harness.
+- A dedicated NotebookLM proof notebook was created and populated with HI-OS
+  sources from `docs/HARNESS.md`, `docs/CONTEXT_RULES.md`,
+  `docs/FEATURE_INTAKE.md`, Decision 0010, and the US-026 story packet.
+- Live adapter command produced `.harness/context/US-026-notebooklm-brief.json`
+  and captured raw provider output at
+  `.harness/context/US-026-notebooklm-provider-response.json`.
+- Generated live artifact status is `pass` with provider
+  `notebooklm-mcp-cli`, adapter `harness-cli-notebooklm`, 6 provenance
+  sources, 1 grounded claim, 20 citations, and 0 uncited claims.
+- Explicit US-024 ingest passed for source `notebooklm` with artifact SHA256
+  `63eac2f397d73e447f000ef2fd756fcc59ba6119ead836d6b8587eca2f095cb0`.
+- Context pack `.harness/context/US-026-context.md` renders NotebookLM grounded
+  context as `pass`.
+- `harness-cli arch-check --story US-026` passed.
+- `harness-cli story verify US-026` passed mechanical verification with 49
+  Rust tests and passed the story governance gate.
+- Final live-provider trace: `#37`, Detailed `3/3`.
 - No Google credentials, cookies, tokens, browser profiles, session files, MCP
   server direct writes, release/tag, installer pin, or CodeGraph changes.
 
@@ -173,9 +180,11 @@ Implementation evidence recorded so far:
 - Implementation trace: `#21`, Detailed `3/3`, outcome `partial` because live
   `nlm` provider proof was unavailable locally before provider installation.
 - Provider-contract correction trace: `#24`, Detailed `3/3`, outcome
-  `partial` because authenticated NotebookLM provider proof is still missing.
+  `partial` because authenticated NotebookLM provider proof was still missing
+  at that point.
+- Live provider proof trace: `#37`, Detailed `3/3`, outcome `completed`.
 - Decision 0010 remains the governing file-based boundary.
 - Provider contract: accepted for implementation planning.
 - Default provider: `notebooklm-mcp-cli`.
 - Alternate provider candidate: `PleasePrompto/notebooklm-mcp`.
-- Story status: In Progress.
+- Story status: Implemented.
