@@ -325,3 +325,15 @@ python scripts/verify-mcp-artifact-contracts.py
 This verifier does not call an MCP provider or ingest data. It checks only the
 tracked artifact contracts and representative pass, fail, and inconclusive
 states.
+
+## Adoption Documentation Verification
+
+US-039 adds the clean clone adoption walkthrough. Validate the walkthrough and
+its index links with:
+
+```bash
+python scripts/verify-adoption-docs.py
+```
+
+This verifier checks documentation coverage only. It does not create runtime
+Harness evidence, call CodeGraph, call NotebookLM, or verify a public release.

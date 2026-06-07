@@ -21,6 +21,8 @@ future user-provided spec.
 - `decisions/`: durable decisions and tradeoffs.
 - `demo/`: concrete walkthroughs that show how the harness transforms input
   into agent-ready work.
+- `adoption/`: first-run and user-adoption walkthroughs, starting with the
+  clean clone path.
 - `templates/`: reusable spec-intake, story, plan, decision, and validation
   formats.
 

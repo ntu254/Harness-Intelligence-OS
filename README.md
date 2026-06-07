@@ -161,6 +161,13 @@ Linux arm64, and Windows x64. The Windows asset is
 
 ## Try The Flow
 
+If you are starting from a fresh checkout, use the clean clone walkthrough
+first:
+
+- `docs/adoption/clean-clone-walkthrough.md`: clone, build the CLI, initialize
+  local durable state, create a demo story, run the governance gate, export the
+  dashboard, and verify the public release.
+
 The fastest way to understand the harness is to inspect the tiny demo:
 
 - `docs/demo/README.md`: shows how a simple product idea becomes product docs,
