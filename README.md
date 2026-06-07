@@ -1,367 +1,62 @@
+<div align="center">
+
 # Harness Intelligence OS
 
-An agent-ready operating layer for software repositories.
+### Agent-ready operating layer for software repositories
 
-HI-OS helps humans and coding agents move from intent to verified work without
-letting the agent jump straight into edits. It gives a repo a durable workflow:
+**HI-OS helps humans and AI coding agents move from intent to verified work without letting the agent jump straight into edits.**
 
-```text
-intake
-  -> context
-  -> validation proof
-  -> trace
-  -> governance dashboard
-```
+<br />
 
-The app is what users touch. HI-OS is what agents touch.
+<p>
+  <strong>intake</strong> →
+  <strong>context pack</strong> →
+  <strong>validation proof</strong> →
+  <strong>trace</strong> →
+  <strong>governance dashboard</strong>
+</p>
 
-## What HI-OS Does
+<br />
 
-Coding agents are fast, but most repositories do not tell them enough before
-they start changing code. Important product rules live in chat history,
-validation expectations are vague, and release trust is often checked after the
-fact.
+<table>
+  <tr>
+    <td><strong>Product</strong></td>
+    <td>Harness Intelligence OS</td>
+  </tr>
+  <tr>
+    <td><strong>Short name</strong></td>
+    <td>HI-OS</td>
+  </tr>
+  <tr>
+    <td><strong>Canonical origin</strong></td>
+    <td><code>ntu254/Harness-Intelligence-OS</code></td>
+  </tr>
+  <tr>
+    <td><strong>Current line</strong></td>
+    <td><code>v0.7 Adoption Ready</code></td>
+  </tr>
+</table>
 
-HI-OS makes the repository answer practical questions first:
+</div>
 
-- What is the requested work?
-- Which product or architecture rules apply?
-- How risky is the change?
-- What context should the agent read?
-- What proof will show the work is done?
-- Which release or dashboard evidence can a human audit later?
+---
 
-The result is a repository workflow where agents operate through intake,
-story packets, context packs, architecture checks, validation gates, traces,
-release verification, and governance reports instead of free-form handoff.
+## What HI-OS Is
 
-## Sovereign Identity
+HI-OS is a **repository operating layer for AI coding agents**.
 
-HI-OS has one tracked product identity:
+The app is what users touch.  
+**HI-OS is what agents touch.**
 
-```text
-Harness Intelligence OS (HI-OS)
-repository: ntu254/Harness-Intelligence-OS
-default release origin: ntu254/Harness-Intelligence-OS
-```
-
-The identity lives in `hios.toml`. Check it with:
-
-```bash
-scripts/bin/harness-cli identity
-```
-
-On Windows:
-
-```powershell
-.\scripts\bin\harness-cli.exe identity
-```
-
-Governance reports and dashboards include this identity, and `release verify`
-checks that the release origin remains aligned with it.
-
-## 5-Minute Quickstart
-
-Use this when you want to install HI-OS into another project.
-
-### 1. Install
-
-From the target project directory:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --yes
-```
-
-On Windows PowerShell:
-
-```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.ps1"))) -Yes
-```
-
-If the project already has `AGENTS.md`, `docs/`, or `scripts/`, use merge mode:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --merge --yes
-```
-
-```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.ps1"))) -Merge -Yes
-```
-
-Claude Code users should add `--claude` so `CLAUDE.md` imports the Harness
-instructions:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --claude --yes
-```
-
-The installer copies the Harness docs and downloads the trusted prebuilt CLI to
-`scripts/bin/harness-cli` on macOS/Linux or `scripts/bin/harness-cli.exe` on
-Windows.
-
-For production distribution, HI-OS also builds a platform-neutral payload ZIP.
-It contains the installer source and operating contract without Rust source,
-historical story packets, archived plans, or runtime evidence:
-
-```bash
-bash scripts/build-production-payload.sh --version 0.7.0
-python scripts/verify-production-payload.py --version 0.7.0 --source-check
-```
-
-The generated ZIP and SHA256 live under `dist/`. Public release upload remains
-part of release hardening.
-
-### 2. Initialize The Local Harness Database
-
-```bash
-scripts/bin/harness-cli init
-scripts/bin/harness-cli query matrix
-```
-
-On Windows:
-
-```powershell
-.\scripts\bin\harness-cli.exe init
-.\scripts\bin\harness-cli.exe query matrix
-```
-
-`harness.db` and `.harness/` are local runtime evidence. They are ignored and
-should not be committed.
-
-### 3. Create The First Work Item
-
-```bash
-scripts/bin/harness-cli intake \
-  --type "change request" \
-  --summary "Describe the requested change" \
-  --lane normal \
-  --story US-001 \
-  --docs "docs/product/overview.md"
-
-scripts/bin/harness-cli story add \
-  --id US-001 \
-  --title "First verified change" \
-  --lane normal \
-  --contract docs/product/overview.md \
-  --verify "your-test-command"
-```
-
-On Windows, use `.\scripts\bin\harness-cli.exe` with the same arguments.
-
-### 4. Generate Context, Validate, Trace
-
-```bash
-scripts/bin/harness-cli context --story US-001
-scripts/bin/harness-cli arch-check --story US-001
-scripts/bin/harness-cli story update --id US-001 --unit 1 --integration 1 --e2e 0 --platform 0
-scripts/bin/harness-cli trace --summary "Completed US-001" --story US-001 --outcome completed
-scripts/bin/harness-cli story verify US-001
-```
-
-`story verify` runs the configured proof command and then enforces the
-governance gate. The story is not done until both pass.
-
-### 5. Export Governance Evidence
-
-```bash
-scripts/bin/harness-cli governance report --output .harness/reports/governance-report.json
-scripts/bin/harness-cli governance dashboard --report .harness/reports/governance-report.json --output .harness/dashboard/index.html
-```
-
-Open `.harness/dashboard/index.html` locally to inspect story proof,
-governance gate status, release evidence, friction, and maturity summary.
-
-Starting from a fresh clone of this repository? Use the full walkthrough:
-
-- `docs/adoption/clean-clone-walkthrough.md`
-
-## Core Workflow
-
-HI-OS is deliberately boring in the best way: every serious task follows the
-same path.
+Most repositories let agents read scattered files, infer intent, and edit code too early. HI-OS changes that by giving the repository a governed workflow:
 
 ```text
-Human request
-  -> intake classification
-  -> story packet
-  -> context pack
-  -> implementation
-  -> validation proof
-  -> trace
-  -> story governance gate
-  -> governance dashboard
-```
-
-Key commands:
-
-```bash
-scripts/bin/harness-cli intake --summary "<work>" --lane normal --story US-001
-scripts/bin/harness-cli context --story US-001
-scripts/bin/harness-cli arch-check --story US-001
-scripts/bin/harness-cli story verify US-001
-scripts/bin/harness-cli trace --summary "<what happened>" --story US-001 --outcome completed
-scripts/bin/harness-cli governance report --output .harness/reports/governance-report.json
-scripts/bin/harness-cli governance dashboard --report .harness/reports/governance-report.json --output .harness/dashboard/index.html
-```
-
-Agents should read `AGENTS.md`, `docs/HARNESS.md`,
-`docs/FEATURE_INTAKE.md`, `docs/ARCHITECTURE.md`, and
-`docs/CONTEXT_RULES.md` before work. The local `harness-cli query matrix`
-shows what proof exists and what is still missing.
-
-## Trusted Distribution
-
-HI-OS publishes prebuilt Harness CLI binaries with SHA256 assets for:
-
-- macOS arm64;
-- macOS x64;
-- Linux x64;
-- Linux arm64;
-- Windows x64.
-
-Verify the public release chain:
-
-```bash
-scripts/bin/harness-cli release verify --version 0.7.0
-```
-
-On Windows:
-
-```powershell
-.\scripts\bin\harness-cli.exe release verify --version 0.7.0
-```
-
-`release verify` checks release metadata, 5 platform binaries, 5 binary SHA256
-files, the production payload ZIP and its SHA256, host binary version, and a
-smoke command. Network or GitHub availability failures are `inconclusive`, not
-`pass`.
-
-The default public origin is `ntu254/Harness-Intelligence-OS`, configured in
-`harness-release.toml` and aligned with tracked identity in `hios.toml`.
-
-## Governance Dashboard
-
-The governance report and dashboard make local proof inspectable:
-
-- story status and proof columns;
-- governance gate pass/fail state;
-- release verification summary;
-- friction events;
-- maturity score;
-- static HTML dashboard output.
-
-```bash
-scripts/bin/harness-cli governance report --output .harness/reports/governance-report.json
-scripts/bin/harness-cli governance dashboard --report .harness/reports/governance-report.json --output .harness/dashboard/index.html
-```
-
-The dashboard is static HTML with no external assets.
-
-## CodeGraph And NotebookLM
-
-HI-OS v0.4+ supports file-based provider boundaries for external intelligence.
-Providers do not write directly into Harness SQLite.
-
-CodeGraph impact evidence:
-
-```bash
-scripts/bin/harness-cli codegraph impact --story US-001 --mode changed-files --changed-files .harness/context/changed-files.txt
-```
-
-NotebookLM grounded brief evidence:
-
-```bash
-scripts/bin/harness-cli notebooklm brief --story US-001 --notebook <notebook-id-or-alias> --query "Find citation-backed context for this story."
-```
-
-Rules:
-
-- Provider unavailable: `inconclusive`, not `pass`.
-- Missing citations or malformed provider output: `fail`.
-- Passing artifacts go through `context ingest`.
-- Harness never stores Google credentials, cookies, tokens, browser profiles,
-  or provider session files.
-
-## Repository Map
-
-```text
-AGENTS.md                         stable agent entrypoint
-docs/HARNESS.md                   human-agent operating model
-docs/FEATURE_INTAKE.md            risk lanes and intake rules
-docs/ARCHITECTURE.md              architecture boundary rules
-docs/CONTEXT_RULES.md             what agents should read and when
-docs/agents/                      Cursor, Claude Code, and Codex packs
-docs/adoption/                    first-run adoption walkthroughs
-docs/examples/                    end-to-end example workflows
-docs/troubleshooting.md           installer, provider, gate, and dashboard fixes
-docs/COMMAND_COOKBOOK.md          grouped command examples
-docs/demo/                        example transformation from idea to story
-docs/archive/                     historical phase plans and early specs
-docs/stories/                     story packets and validation evidence
-docs/decisions/                   durable decisions
-docs/schemas/                     artifact and report schemas
-packaging/production-include.toml production payload contract
-scripts/bin/harness-cli           installed CLI path in target projects
-scripts/README.md                 command and installer details
-```
-
-For source-clone setup of this repo, start here:
-
-- `docs/adoption/clean-clone-walkthrough.md`
-
-For a complete agent workflow example, read:
-
-- `docs/examples/full-agent-workflow.md`
-
-For agent-specific operating notes, read:
-
-- `docs/agents/codex.md`
-- `docs/agents/claude-code.md`
-- `docs/agents/cursor.md`
-
-For common failures and recovery steps, read:
-
-- `docs/troubleshooting.md`
-
-For grouped command examples, read:
-
-- `docs/COMMAND_COOKBOOK.md`
-
-For command details, use:
-
-- `scripts/README.md`
-- `scripts/bin/harness-cli help`
-
-## Current Milestones
-
-Completed foundation:
-
-- v0.1: Context-grounded auto intake.
-- v0.2: Blocking governance gate.
-- v0.3: Trusted distribution and evidence trail.
-- v0.4: MCP artifact contracts and provider adapters.
-- v0.5: Structured friction learning loop.
-- v0.6: Governance report, maturity summary, and static dashboard.
-- v0.7: Adoption Ready.
-
-HI-OS v0.7 is the completed adoption line: installable, understandable,
-debuggable, production-clean, and publicly verifiable.
-
-## Contributing
-
-Useful contributions include:
-
-- testing the clean clone walkthrough on a new machine;
-- improving docs for first-time users;
-- adding real project examples;
-- reporting agent failure cases caused by missing repo context;
-- improving validation patterns for different stacks;
-- comparing behavior across Codex, Claude Code, Cursor, and other agents.
-
-See `CONTRIBUTING.md` for contribution notes.
-
-## Short Description
-
-HI-OS is an agent-ready repository operating layer for Codex, Claude Code,
-Cursor, and other coding agents: intake, context packs, story gates, release
-verification, governance dashboards, and durable traces.
+human request
+  → intake classification
+  → story packet
+  → context pack
+  → implementation
+  → validation proof
+  → trace
+  → story governance gate
+  → governance dashboard
