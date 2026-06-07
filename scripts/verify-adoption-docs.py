@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate adoption docs contain the clean-clone walkthrough contract."""
+"""Validate adoption docs contain the README and walkthrough contracts."""
 
 from __future__ import annotations
 
@@ -28,6 +28,28 @@ def main() -> int:
     readme = read("README.md")
     docs_readme = read("docs/README.md")
     scripts_readme = read("scripts/README.md")
+
+    readme_needles = [
+        "# Harness Intelligence OS",
+        "5-Minute Quickstart",
+        "intake",
+        "context",
+        "story verify",
+        "trace",
+        "governance dashboard",
+        "docs/adoption/clean-clone-walkthrough.md",
+        "release verify --version 0.6.0",
+        "Governance Dashboard",
+        "CodeGraph",
+        "NotebookLM",
+        "inconclusive",
+        "Google credentials",
+        "ntu254/Harness-Intelligence-OS",
+        "v0.7: Adoption Ready",
+    ]
+
+    for needle in readme_needles:
+        require(readme, needle, "README.md")
 
     walkthrough_needles = [
         "git clone https://github.com/ntu254/Harness-Intelligence-OS.git",
@@ -77,4 +99,3 @@ if __name__ == "__main__":
     except AssertionError as exc:
         print(f"Adoption docs verification failed: {exc}", file=sys.stderr)
         raise SystemExit(1)
-

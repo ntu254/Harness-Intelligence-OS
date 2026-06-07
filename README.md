@@ -1,262 +1,308 @@
-# repository-harness
+# Harness Intelligence OS
 
-Turn any software repo into an agent-ready workspace.
+An agent-ready operating layer for software repositories.
 
-## Harness Intelligence OS
+HI-OS helps humans and coding agents move from intent to verified work without
+letting the agent jump straight into edits. It gives a repo a durable workflow:
 
-Harness Intelligence OS extends `repository-harness` with an intelligence and
-governance layer for AI coding agents. It combines:
+```text
+intake
+  -> context
+  -> validation proof
+  -> trace
+  -> governance dashboard
+```
 
-- CodeGraph-style impact reports for code-aware risk analysis.
-- Grounded business context for product-aware planning.
-- Harness CLI controls for risk laning, context packs, architecture checks,
-  validation gates, and traceability.
+The app is what users touch. HI-OS is what agents touch.
 
-The goal is to prevent agents from editing or handing off code before they
-understand the product context, affected code areas, architecture constraints,
-and required validation proof.
+## What HI-OS Does
 
-`repository-harness` is a repository-level operating harness for Claude Code,
-Codex, Cursor, and other coding agents. It gives agents the missing project
-context they need before they change code: where to start, what the product
-contract says, how risky the work is, what proof is required, and which
-decisions future agents should inherit.
+Coding agents are fast, but most repositories do not tell them enough before
+they start changing code. Important product rules live in chat history,
+validation expectations are vague, and release trust is often checked after the
+fact.
 
-The app is what users touch. The harness is what agents touch.
+HI-OS makes the repository answer practical questions first:
 
-## Why Star This Repo
-
-Star this repo if you want practical, reusable patterns for making AI-assisted
-software development more reliable, inspectable, and easier for humans to steer.
-
-This project is exploring a simple idea:
-
-> Coding agents do not only need better prompts. They need better repositories.
-
-## The Problem
-
-Most repos are built for humans reading code in a familiar codebase. Coding
-agents usually enter with only a chat prompt and a shallow snapshot of files.
-That leads to common failure modes:
-
-- The agent edits code before understanding product intent.
-- Important constraints live only in chat history or in someone's head.
-- Validation expectations are vague or discovered too late.
-- Architecture tradeoffs are repeated instead of inherited.
-- Large requests do not get broken into reviewable story-sized work.
-
-## The Harness Approach
-
-A repository starts to have a harness when it helps an agent answer practical
-engineering questions without relying only on chat history:
-
-- What should I read first?
-- What type of work is this?
-- Which product contract does it affect?
+- What is the requested work?
+- Which product or architecture rules apply?
 - How risky is the change?
+- What context should the agent read?
 - What proof will show the work is done?
-- What decision or lesson should future agents inherit?
+- Which release or dashboard evidence can a human audit later?
 
-In this repo, those answers live in:
+The result is a repository workflow where agents operate through intake,
+story packets, context packs, architecture checks, validation gates, traces,
+release verification, and governance reports instead of free-form handoff.
 
-- `AGENTS.md` — the stable agent shim with local project notes and Harness
-  doc links.
-- `docs/HARNESS.md` — the human-agent collaboration model.
-- `docs/FEATURE_INTAKE.md` — tiny, normal, and high-risk work classification.
-- `docs/ARCHITECTURE.md` — architecture discovery and boundary rules.
-- `docs/TEST_MATRIX.md` — behavior-to-proof validation expectations.
-- `docs/stories/` — story packets and backlog items.
-- `docs/decisions/` — durable decisions and tradeoffs.
-- `docs/templates/` — reusable spec, story, decision, and validation templates.
+## 5-Minute Quickstart
 
-OpenAI describes this shift as an agent-first world where humans steer and
-agents execute:
+Use this when you want to install HI-OS into another project.
 
-https://openai.com/index/harness-engineering/
+### 1. Install
 
-## Install Harness Into A Project
-
-From a target project directory, run:
+From the target project directory:
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --yes
 ```
 
-On Windows PowerShell, run:
+On Windows PowerShell:
 
 ```powershell
 & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.ps1"))) -Yes
 ```
 
-If the target already has `AGENTS.md`, `docs/`, or `scripts/`, choose one:
+If the project already has `AGENTS.md`, `docs/`, or `scripts/`, use merge mode:
 
 ```bash
-# Update an existing Harness repo without moving existing files
 curl -fsSL "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --merge --yes
-
-# Back up and replace AGENTS.md, docs/, and scripts/
-curl -fsSL "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --override --yes
 ```
 
 ```powershell
-# Update an existing Harness repo without moving existing files
 & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.ps1"))) -Merge -Yes
-
-# Back up and replace AGENTS.md, docs/, and scripts/
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.ps1"))) -Override -Yes
 ```
 
-Use `--merge` when a project already has Harness and you want to append newly
-added Harness files without moving the existing `AGENTS.md`, `docs/`, or
-`scripts/` paths into backup. Existing files stay untouched; only missing
-Harness files are created.
-
-For older Harness installs whose `AGENTS.md` still contains the full generated
-operating guide, refresh it into the small stable shim:
-
-```bash
-curl -fsSL "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --merge --refresh-agent-shim --yes
-```
-
-The refresh backs up the existing file. If it detects the old
-Harness-generated guide, it replaces it with the shim. If the file appears
-custom, it appends or updates a marked Harness block instead of overwriting the
-project's local instructions.
-
-If the project is driven with Claude Code, add `--claude`. Claude Code never
-auto-loads `AGENTS.md`, so without this the installed harness is invisible to
-fresh sessions. The flag installs (or refreshes) a `CLAUDE.md` whose marked
-Harness block `@`-imports `AGENTS.md` and `docs/FEATURE_INTAKE.md` into every
-session's context. An existing `CLAUDE.md` gets the block appended after a
-backup; plain installs without the flag never touch `CLAUDE.md`:
+Claude Code users should add `--claude` so `CLAUDE.md` imports the Harness
+instructions:
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --claude --yes
 ```
 
-Or install into a specific path:
+The installer copies the Harness docs and downloads the trusted prebuilt CLI to
+`scripts/bin/harness-cli` on macOS/Linux or `scripts/bin/harness-cli.exe` on
+Windows.
+
+### 2. Initialize The Local Harness Database
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.sh?$(date +%s)" | bash -s -- --directory /path/to/project --yes
+scripts/bin/harness-cli init
+scripts/bin/harness-cli query matrix
 ```
+
+On Windows:
 
 ```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/ntu254/Harness-Intelligence-OS/main/scripts/install-harness.ps1"))) -Directory C:\path\to\project -Yes
+.\scripts\bin\harness-cli.exe init
+.\scripts\bin\harness-cli.exe query matrix
 ```
 
-Use `--dry-run` on Bash or `-DryRun` on PowerShell to preview changes before
-writing files.
+`harness.db` and `.harness/` are local runtime evidence. They are ignored and
+should not be committed.
 
-The installer also downloads the prebuilt Harness CLI for the current platform,
-verifies its `.sha256` checksum, and installs it at
-`scripts/bin/harness-cli` on macOS/Linux or `scripts/bin/harness-cli.exe` on
-Windows. The Rust CLI is the main Harness tool and stable command path.
+### 3. Create The First Work Item
 
-Harness CLI release assets are published from tags by the
-`Harness CLI Release` GitHub Actions workflow. The installer expects each
-release to include `harness-cli-<platform>` and
-`harness-cli-<platform>.sha256` assets for macOS arm64, macOS x64, Linux x64,
-Linux arm64, and Windows x64. The Windows asset is
-`harness-cli-windows-x64.exe` plus `harness-cli-windows-x64.exe.sha256`.
+```bash
+scripts/bin/harness-cli intake \
+  --type "change request" \
+  --summary "Describe the requested change" \
+  --lane normal \
+  --story US-001 \
+  --docs "docs/product/overview.md"
 
-## Try The Flow
+scripts/bin/harness-cli story add \
+  --id US-001 \
+  --title "First verified change" \
+  --lane normal \
+  --contract docs/product/overview.md \
+  --verify "your-test-command"
+```
 
-If you are starting from a fresh checkout, use the clean clone walkthrough
-first:
+On Windows, use `.\scripts\bin\harness-cli.exe` with the same arguments.
 
-- `docs/adoption/clean-clone-walkthrough.md`: clone, build the CLI, initialize
-  local durable state, create a demo story, run the governance gate, export the
-  dashboard, and verify the public release.
+### 4. Generate Context, Validate, Trace
 
-The fastest way to understand the harness is to inspect the tiny demo:
+```bash
+scripts/bin/harness-cli context --story US-001
+scripts/bin/harness-cli arch-check --story US-001
+scripts/bin/harness-cli story update --id US-001 --unit 1 --integration 1 --e2e 0 --platform 0
+scripts/bin/harness-cli trace --summary "Completed US-001" --story US-001 --outcome completed
+scripts/bin/harness-cli story verify US-001
+```
 
-- `docs/demo/README.md`: shows how a simple product idea becomes product docs,
-  stories, validation expectations, and decisions before implementation starts.
+`story verify` runs the configured proof command and then enforces the
+governance gate. The story is not done until both pass.
 
-A typical flow looks like this:
+### 5. Export Governance Evidence
+
+```bash
+scripts/bin/harness-cli governance report --output .harness/reports/governance-report.json
+scripts/bin/harness-cli governance dashboard --report .harness/reports/governance-report.json --output .harness/dashboard/index.html
+```
+
+Open `.harness/dashboard/index.html` locally to inspect story proof,
+governance gate status, release evidence, friction, and maturity summary.
+
+Starting from a fresh clone of this repository? Use the full walkthrough:
+
+- `docs/adoption/clean-clone-walkthrough.md`
+
+## Core Workflow
+
+HI-OS is deliberately boring in the best way: every serious task follows the
+same path.
 
 ```text
-human intent or product spec
-  -> product contract
-  -> feature intake
+Human request
+  -> intake classification
   -> story packet
-  -> validation expectations
-  -> implementation work
-  -> decision or lesson captured for future agents
+  -> context pack
+  -> implementation
+  -> validation proof
+  -> trace
+  -> story governance gate
+  -> governance dashboard
 ```
 
-Implementation prompts do not go straight to code. They first pass through
-feature intake, become story-sized work when needed, and then carry both product
-validation and harness maintenance expectations.
+Key commands:
 
-## Current State
+```bash
+scripts/bin/harness-cli intake --summary "<work>" --lane normal --story US-001
+scripts/bin/harness-cli context --story US-001
+scripts/bin/harness-cli arch-check --story US-001
+scripts/bin/harness-cli story verify US-001
+scripts/bin/harness-cli trace --summary "<what happened>" --story US-001 --outcome completed
+scripts/bin/harness-cli governance report --output .harness/reports/governance-report.json
+scripts/bin/harness-cli governance dashboard --report .harness/reports/governance-report.json --output .harness/dashboard/index.html
+```
 
-This repository is in Harness v0.
+Agents should read `AGENTS.md`, `docs/HARNESS.md`,
+`docs/FEATURE_INTAKE.md`, `docs/ARCHITECTURE.md`, and
+`docs/CONTEXT_RULES.md` before work. The local `harness-cli query matrix`
+shows what proof exists and what is still missing.
 
-There is no application implementation and no baked-in product specification
-yet. The current work is the reusable project harness: the file structure,
-agent operating model, feature intake process, story templates, and validation
-expectations that help humans and agents turn a future user-provided spec into
-implementation work.
+## Trusted Distribution
 
-## Product Sources
+HI-OS publishes prebuilt Harness CLI binaries with SHA256 assets for:
 
-No product contract is currently defined.
+- macOS arm64;
+- macOS x64;
+- Linux x64;
+- Linux arm64;
+- Windows x64.
 
-When a user provides a project specification, add or reference it as the input
-spec for the first buildout, then derive smaller living artifacts from it:
+Verify the public release chain:
 
-- `docs/product/`: current product contract files, created from the spec.
-- `docs/stories/`: story packets and backlog created from selected work.
-- `docs/TEST_MATRIX.md`: behavior-to-proof control panel.
-- `docs/decisions/`: durable decisions and tradeoffs.
+```bash
+scripts/bin/harness-cli release verify --version 0.6.0
+```
 
-Do not keep a project-specific spec or product breakdown in this harness until
-a real project supplies one.
+On Windows:
 
-## Repository Structure
+```powershell
+.\scripts\bin\harness-cli.exe release verify --version 0.6.0
+```
+
+`release verify` checks release metadata, 5 platform binaries, 5 SHA256 files,
+download, checksum, binary version, and a smoke command. Network or GitHub
+availability failures are `inconclusive`, not `pass`.
+
+The default public origin is `ntu254/Harness-Intelligence-OS`, configured in
+`harness-release.toml`.
+
+## Governance Dashboard
+
+The governance report and dashboard make local proof inspectable:
+
+- story status and proof columns;
+- governance gate pass/fail state;
+- release verification summary;
+- friction events;
+- maturity score;
+- static HTML dashboard output.
+
+```bash
+scripts/bin/harness-cli governance report --output .harness/reports/governance-report.json
+scripts/bin/harness-cli governance dashboard --report .harness/reports/governance-report.json --output .harness/dashboard/index.html
+```
+
+The dashboard is static HTML with no external assets.
+
+## CodeGraph And NotebookLM
+
+HI-OS v0.4+ supports file-based provider boundaries for external intelligence.
+Providers do not write directly into Harness SQLite.
+
+CodeGraph impact evidence:
+
+```bash
+scripts/bin/harness-cli codegraph impact --story US-001 --mode changed-files --changed-files .harness/context/changed-files.txt
+```
+
+NotebookLM grounded brief evidence:
+
+```bash
+scripts/bin/harness-cli notebooklm brief --story US-001 --notebook <notebook-id-or-alias> --query "Find citation-backed context for this story."
+```
+
+Rules:
+
+- Provider unavailable: `inconclusive`, not `pass`.
+- Missing citations or malformed provider output: `fail`.
+- Passing artifacts go through `context ingest`.
+- Harness never stores Google credentials, cookies, tokens, browser profiles,
+  or provider session files.
+
+## Repository Map
 
 ```text
-project/
-  AGENTS.md
-  README.md
-  docs/
-    HARNESS.md
-    FEATURE_INTAKE.md
-    ARCHITECTURE.md
-    TEST_MATRIX.md
-    HARNESS_BACKLOG.md
-    product/
-    stories/
-    decisions/
-    demo/
-    templates/
-  scripts/
-    README.md
+AGENTS.md                         stable agent entrypoint
+docs/HARNESS.md                   human-agent operating model
+docs/FEATURE_INTAKE.md            risk lanes and intake rules
+docs/ARCHITECTURE.md              architecture boundary rules
+docs/CONTEXT_RULES.md             what agents should read and when
+docs/adoption/                    first-run adoption walkthroughs
+docs/demo/                        example transformation from idea to story
+docs/stories/                     story packets and validation evidence
+docs/decisions/                   durable decisions
+docs/schemas/                     artifact and report schemas
+scripts/bin/harness-cli           installed CLI path in target projects
+scripts/README.md                 command and installer details
 ```
+
+For source-clone setup of this repo, start here:
+
+- `docs/adoption/clean-clone-walkthrough.md`
+
+For command details, use:
+
+- `scripts/README.md`
+- `scripts/bin/harness-cli help`
+
+## Current Milestones
+
+Completed foundation:
+
+- v0.1: Context-grounded auto intake.
+- v0.2: Blocking governance gate.
+- v0.3: Trusted distribution and evidence trail.
+- v0.4: MCP artifact contracts and provider adapters.
+- v0.5: Structured friction learning loop.
+- v0.6: Governance report, maturity summary, and static dashboard.
+
+Current adoption work:
+
+- v0.7: Adoption Ready.
+
+The v0.7 focus is not new feature surface. It is making HI-OS easy to install,
+understand, use, debug, and trust.
 
 ## Contributing
 
-This project is early and benefits most from real-world agent failure cases,
-example harness installs, docs improvements, and reusable workflow patterns.
-See `CONTRIBUTING.md` for contribution ideas.
-
 Useful contributions include:
 
-- Show how the harness works in a real project.
-- Add missing templates or improve existing ones.
-- Propose validation patterns for different stacks.
-- Share failures where an agent made the wrong change because the repo lacked
-  context.
-- Compare harness behavior across Claude Code, Codex, Cursor, and other tools.
+- testing the clean clone walkthrough on a new machine;
+- improving docs for first-time users;
+- adding real project examples;
+- reporting agent failure cases caused by missing repo context;
+- improving validation patterns for different stacks;
+- comparing behavior across Codex, Claude Code, Cursor, and other agents.
 
-## Share
+See `CONTRIBUTING.md` for contribution notes.
 
-If this idea resonates, please star the repo and share it with someone building
-with coding agents.
+## Short Description
 
-Short description:
-
-> An agent-ready repo harness for Claude Code, Codex, Cursor, and other coding
-> agents: AGENTS.md, product contracts, story packets, validation matrix, and
-> decision records.
+HI-OS is an agent-ready repository operating layer for Codex, Claude Code,
+Cursor, and other coding agents: intake, context packs, story gates, release
+verification, governance dashboards, and durable traces.
