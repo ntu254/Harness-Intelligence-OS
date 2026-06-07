@@ -592,6 +592,7 @@ pub struct GovernanceReport {
     pub artifact_type: String,
     pub report_id: String,
     pub generated_at: String,
+    pub identity: HiosIdentity,
     pub repository: GovernanceRepository,
     pub story_summary: GovernanceStorySummary,
     pub gate_summary: GovernanceGateSummary,
@@ -919,6 +920,20 @@ pub struct ContextIngestReport {
 pub struct ReleaseConfig {
     pub origin: String,
     pub tag_prefix: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub struct HiosConfig {
+    pub identity: HiosIdentity,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct HiosIdentity {
+    pub product_name: String,
+    pub short_name: String,
+    pub slug: String,
+    pub repository: String,
+    pub default_release_origin: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]

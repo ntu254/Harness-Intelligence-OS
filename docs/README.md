@@ -17,6 +17,7 @@ future user-provided spec.
   trace, release, dashboard, and MCP commands.
 - `troubleshooting.md`: recovery steps for installer, release verification,
   provider, governance gate, and dashboard failures.
+- Root `hios.toml`: tracked HI-OS product identity and default public origin.
 
 ## Folders
 

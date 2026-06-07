@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "docs" / "schemas" / "governance-report.schema.json"
 DOC = ROOT / "docs" / "GOVERNANCE_REPORT.md"
 DECISION = ROOT / "docs" / "decisions" / "0012-governance-report-schema.md"
+IDENTITY_DECISION = ROOT / "docs" / "decisions" / "0013-hi-os-sovereign-identity.md"
 
 
 def expect_valid(validator, instance, label):
@@ -33,6 +34,7 @@ for path in [DOC, DECISION]:
     text = path.read_text(encoding="utf-8")
     for required in [
         "governance-report",
+        "identity",
         "story",
         "release",
         "friction",
@@ -40,11 +42,29 @@ for path in [DOC, DECISION]:
         if required not in text:
             raise AssertionError(f"{required} missing from {path}")
 
+identity_decision_text = IDENTITY_DECISION.read_text(encoding="utf-8")
+for required in [
+    "hios.toml",
+    "identity",
+    "release",
+    "governance",
+    "ntu254/Harness-Intelligence-OS",
+]:
+    if required not in identity_decision_text:
+        raise AssertionError(f"{required} missing from {IDENTITY_DECISION}")
+
 report = {
-    "schema_version": "1.0.0",
+    "schema_version": "1.1.0",
     "artifact_type": "governance-report",
     "report_id": "77777777-7777-4777-8777-777777777777",
     "generated_at": "2026-06-07T00:00:00Z",
+    "identity": {
+        "product_name": "Harness Intelligence OS",
+        "short_name": "HI-OS",
+        "slug": "hios",
+        "repository": "ntu254/Harness-Intelligence-OS",
+        "default_release_origin": "ntu254/Harness-Intelligence-OS",
+    },
     "repository": {
         "origin": "ntu254/Harness-Intelligence-OS",
         "commit": "cc1f5e9",
@@ -112,6 +132,14 @@ expect_valid(validator, report, "complete governance report")
 invalid = copy.deepcopy(report)
 invalid["artifact_type"] = "dashboard"
 expect_invalid(validator, invalid, "wrong artifact type")
+
+invalid = copy.deepcopy(report)
+invalid.pop("identity")
+expect_invalid(validator, invalid, "missing identity")
+
+invalid = copy.deepcopy(report)
+invalid["identity"]["default_release_origin"] = ""
+expect_invalid(validator, invalid, "empty identity release origin")
 
 invalid = copy.deepcopy(report)
 invalid["release_summary"]["release_verify_result"] = "warning"

@@ -35,6 +35,31 @@ The result is a repository workflow where agents operate through intake,
 story packets, context packs, architecture checks, validation gates, traces,
 release verification, and governance reports instead of free-form handoff.
 
+## Sovereign Identity
+
+HI-OS has one tracked product identity:
+
+```text
+Harness Intelligence OS (HI-OS)
+repository: ntu254/Harness-Intelligence-OS
+default release origin: ntu254/Harness-Intelligence-OS
+```
+
+The identity lives in `hios.toml`. Check it with:
+
+```bash
+scripts/bin/harness-cli identity
+```
+
+On Windows:
+
+```powershell
+.\scripts\bin\harness-cli.exe identity
+```
+
+Governance reports and dashboards include this identity, and `release verify`
+checks that the release origin remains aligned with it.
+
 ## 5-Minute Quickstart
 
 Use this when you want to install HI-OS into another project.
@@ -199,7 +224,7 @@ download, checksum, binary version, and a smoke command. Network or GitHub
 availability failures are `inconclusive`, not `pass`.
 
 The default public origin is `ntu254/Harness-Intelligence-OS`, configured in
-`harness-release.toml`.
+`harness-release.toml` and aligned with tracked identity in `hios.toml`.
 
 ## Governance Dashboard
 

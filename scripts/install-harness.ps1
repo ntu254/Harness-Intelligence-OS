@@ -396,6 +396,7 @@ $files = @(
     "scripts/schema/007-friction-events.sql",
     "harness-architecture.toml",
     "harness-release.toml",
+    "hios.toml",
     ".gitignore"
 )
 

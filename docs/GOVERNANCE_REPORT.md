@@ -58,6 +58,7 @@ writes only the requested HTML file.
 
 A governance report captures:
 
+- tracked HI-OS product identity from `hios.toml`;
 - repository identity and commit metadata;
 - story proof summary;
 - governance gate summary;
@@ -91,6 +92,8 @@ policy.
 ## Guardrails
 
 - Reports are read-only snapshots.
+- Reports include identity evidence, but identity still lives in tracked
+  `hios.toml`.
 - Missing or failed evidence remains visible; it is not downgraded to a warning.
 - `inconclusive` remains distinct from `pass`.
 - Runtime report files may live under `.harness/reports/`.

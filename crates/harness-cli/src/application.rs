@@ -4,7 +4,7 @@ use crate::domain::{
     ArchitectureCheckResult, BacklogFilter, BacklogRecord, BacklogSuggestionRecord, BoolFlag,
     CodeGraphMode, ContextIngestReport, ContextSource, CsvList, DecisionRecord, FrictionActionType,
     FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionSource, FrictionType,
-    GovernanceReport, HarnessStats, InputType, IntakeRecord, MappedContext,
+    GovernanceReport, HarnessStats, HiosIdentity, InputType, IntakeRecord, MappedContext,
     ReleaseVerificationReport, RiskLane, RuleProposalRecord, StoryGateResult, StoryMatrixRecord,
     StoryVerifyStatus, TraceRecord, TraceScoreResult,
 };
@@ -330,6 +330,10 @@ impl HarnessService {
         input: ReleaseVerifyInput,
     ) -> crate::infrastructure::Result<(PathBuf, ReleaseVerificationReport)> {
         self.repository.verify_release(input)
+    }
+
+    pub fn identity(&self) -> crate::infrastructure::Result<HiosIdentity> {
+        self.repository.identity()
     }
 
     pub fn generate_governance_report(

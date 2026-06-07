@@ -14,6 +14,12 @@ Initialize local durable state:
 scripts/bin/harness-cli init
 ```
 
+Show tracked HI-OS identity:
+
+```bash
+scripts/bin/harness-cli identity
+```
+
 Apply pending migrations:
 
 ```bash
@@ -339,4 +345,3 @@ scripts/bin/harness-cli backlog add \
   --pain "Agents could not identify proof command" \
   --risk normal
 ```
-

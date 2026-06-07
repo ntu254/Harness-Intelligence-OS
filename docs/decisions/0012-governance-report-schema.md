@@ -27,6 +27,7 @@ written under `.harness/reports/` by later stories.
 
 The report contract includes:
 
+- tracked HI-OS product identity;
 - repository identity and commit metadata;
 - story proof summary;
 - governance gate summary;
@@ -56,6 +57,8 @@ Positive:
 - Future report generation can target a stable schema.
 - Static dashboard export can consume one validated artifact.
 - Release and friction evidence remain visible in a single snapshot.
+- US-046 extends the schema with a required `identity` object sourced from
+  tracked `hios.toml`.
 
 Tradeoffs:
 

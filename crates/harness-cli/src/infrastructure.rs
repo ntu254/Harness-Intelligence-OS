@@ -28,10 +28,10 @@ use crate::domain::{
     FrictionEventRecord, FrictionRecord, FrictionSeverity, FrictionType, GovernanceFrictionSummary,
     GovernanceGateSummary, GovernanceMaturitySummary, GovernanceProof, GovernanceReleaseSummary,
     GovernanceReport, GovernanceRepository, GovernanceStoryRow, GovernanceStorySummary,
-    GovernanceValidationCommand, GovernanceValidationSummary, HarnessStats, IntakeRecord,
-    MappedContext, ReleaseAssetEvidence, ReleaseCheckResult, ReleaseConfig,
-    ReleaseVerificationReport, RiskLane, RuleProposalRecord, StoryGateResult, StoryMatrixRecord,
-    StoryVerifyStatus, TraceRecord, TraceScoreResult, TraceScoreSource,
+    GovernanceValidationCommand, GovernanceValidationSummary, HarnessStats, HiosConfig,
+    HiosIdentity, IntakeRecord, MappedContext, ReleaseAssetEvidence, ReleaseCheckResult,
+    ReleaseConfig, ReleaseVerificationReport, RiskLane, RuleProposalRecord, StoryGateResult,
+    StoryMatrixRecord, StoryVerifyStatus, TraceRecord, TraceScoreResult, TraceScoreSource,
 };
 
 pub type Result<T> = std::result::Result<T, HarnessInfraError>;
@@ -67,6 +67,10 @@ pub enum HarnessInfraError {
     MissingReleaseConfig(String),
     #[error("release config is invalid: {0}")]
     InvalidReleaseConfig(String),
+    #[error("HI-OS identity config missing: {0}")]
+    MissingIdentityConfig(String),
+    #[error("HI-OS identity config is invalid: {0}")]
+    InvalidIdentityConfig(String),
     #[error("release verification input is invalid: {0}")]
     InvalidReleaseInput(String),
     #[error("context ingest input is invalid: {0}")]
@@ -102,6 +106,7 @@ pub trait HarnessRepository {
         &self,
         input: ReleaseVerifyInput,
     ) -> Result<(PathBuf, ReleaseVerificationReport)>;
+    fn identity(&self) -> Result<HiosIdentity>;
     fn generate_governance_report(
         &self,
         input: GovernanceReportInput,
@@ -496,6 +501,10 @@ impl SqliteHarnessRepository {
 }
 
 impl HarnessRepository for SqliteHarnessRepository {
+    fn identity(&self) -> Result<HiosIdentity> {
+        load_hios_identity(&self.repo_root)
+    }
+
     fn init(&self) -> Result<InitResult> {
         if self.db_path.exists() {
             let connection = self.open_existing()?;
@@ -835,6 +844,8 @@ impl HarnessRepository for SqliteHarnessRepository {
                 "tag_prefix must not be empty".to_owned(),
             ));
         }
+        let identity = load_hios_identity(&self.repo_root)?;
+        validate_identity_matches_release_config(&identity, &config)?;
 
         if let Some(story_id) = input.story_id.as_deref() {
             let connection = self.open_existing()?;
@@ -932,10 +943,12 @@ impl HarnessRepository for SqliteHarnessRepository {
             connection.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%SZ','now');", [], |row| {
                 row.get::<_, String>(0)
             })?;
+        let identity = load_hios_identity(&self.repo_root)?;
         let repository = governance_repository_metadata(&self.repo_root);
         let report_id = uuid_from_sha256(&format!(
-            "{}:{}:{}",
+            "{}:{}:{}:{}",
             generated_at,
+            identity.repository,
             repository.origin,
             repository.commit.as_deref().unwrap_or("")
         ));
@@ -985,10 +998,11 @@ impl HarnessRepository for SqliteHarnessRepository {
         let stories = governance_story_rows(&connection, &self.repo_root)?;
 
         let report = GovernanceReport {
-            schema_version: "1.0.0".to_owned(),
+            schema_version: "1.1.0".to_owned(),
             artifact_type: "governance-report".to_owned(),
             report_id,
             generated_at,
+            identity,
             repository,
             story_summary,
             gate_summary,
@@ -2489,6 +2503,73 @@ fn governance_repository_metadata(repo_root: &Path) -> GovernanceRepository {
         commit: git_output(repo_root, &["rev-parse", "--short=12", "HEAD"]),
         branch: git_output(repo_root, &["rev-parse", "--abbrev-ref", "HEAD"]),
     }
+}
+
+fn load_hios_identity(repo_root: &Path) -> Result<HiosIdentity> {
+    let path = repo_root.join("hios.toml");
+    if !path.is_file() {
+        return Err(HarnessInfraError::MissingIdentityConfig(
+            path.display().to_string(),
+        ));
+    }
+    let text = fs::read_to_string(&path)?;
+    let config = toml::from_str::<HiosConfig>(&text)
+        .map_err(|error| HarnessInfraError::InvalidIdentityConfig(error.to_string()))?;
+    validate_hios_identity(&config.identity)?;
+    Ok(config.identity)
+}
+
+fn validate_hios_identity(identity: &HiosIdentity) -> Result<()> {
+    for (field, value) in [
+        ("product_name", identity.product_name.as_str()),
+        ("short_name", identity.short_name.as_str()),
+        ("slug", identity.slug.as_str()),
+        ("repository", identity.repository.as_str()),
+        (
+            "default_release_origin",
+            identity.default_release_origin.as_str(),
+        ),
+    ] {
+        if value.trim().is_empty() {
+            return Err(HarnessInfraError::InvalidIdentityConfig(format!(
+                "{field} must not be empty"
+            )));
+        }
+    }
+    if identity.slug != normalize_token(&identity.slug) {
+        return Err(HarnessInfraError::InvalidIdentityConfig(
+            "slug must be normalized lowercase ASCII".to_owned(),
+        ));
+    }
+    validate_release_origin(&identity.repository)
+        .map_err(|error| HarnessInfraError::InvalidIdentityConfig(error.to_string()))?;
+    validate_release_origin(&identity.default_release_origin)
+        .map_err(|error| HarnessInfraError::InvalidIdentityConfig(error.to_string()))?;
+    if identity.repository != identity.default_release_origin {
+        return Err(HarnessInfraError::InvalidIdentityConfig(
+            "repository and default_release_origin must match".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_identity_matches_release_config(
+    identity: &HiosIdentity,
+    config: &ReleaseConfig,
+) -> Result<()> {
+    if identity.default_release_origin != config.origin {
+        return Err(HarnessInfraError::InvalidReleaseConfig(format!(
+            "hios.toml default_release_origin '{}' does not match harness-release.toml origin '{}'",
+            identity.default_release_origin, config.origin
+        )));
+    }
+    if identity.repository != config.origin {
+        return Err(HarnessInfraError::InvalidReleaseConfig(format!(
+            "hios.toml repository '{}' does not match harness-release.toml origin '{}'",
+            identity.repository, config.origin
+        )));
+    }
+    Ok(())
 }
 
 fn normalize_git_origin(origin: &str) -> String {
@@ -5915,7 +5996,9 @@ fn render_governance_dashboard(report: &GovernanceReport) -> String {
 </head>
 <body>
   <h1>HI-OS Governance Dashboard</h1>
-  <p>Generated at {generated_at} for {origin}.</p>
+  <p><strong>{product_name}</strong> ({short_name})</p>
+  <p>Identity repository: {identity_repository}. Default release origin: {default_release_origin}.</p>
+  <p>Generated at {generated_at} from Git origin {origin}.</p>
   <section class="cards">
     <div class="card"><div>Maturity</div><div class="value">{level} ({score})</div></div>
     <div class="card"><div>Stories</div><div class="value">{stories}</div></div>
@@ -5942,6 +6025,10 @@ fn render_governance_dashboard(report: &GovernanceReport) -> String {
 </html>
 "#,
         generated_at = escape_html(&report.generated_at),
+        product_name = escape_html(&report.identity.product_name),
+        short_name = escape_html(&report.identity.short_name),
+        identity_repository = escape_html(&report.identity.repository),
+        default_release_origin = escape_html(&report.identity.default_release_origin),
         origin = escape_html(&report.repository.origin),
         level = escape_html(&report.maturity_summary.level),
         score = report.maturity_summary.score,
@@ -6028,6 +6115,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let repo_root = temp_dir.path().join("repo");
         fs::create_dir_all(&repo_root).unwrap();
+        write_test_identity_config(&repo_root);
         let schema_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .ancestors()
             .nth(2)
@@ -6039,6 +6127,20 @@ mod tests {
             schema_root,
         );
         (temp_dir, repo_root, repository)
+    }
+
+    fn write_test_identity_config(repo_root: &Path) {
+        fs::write(
+            repo_root.join("hios.toml"),
+            r#"[identity]
+product_name = "Harness Intelligence OS"
+short_name = "HI-OS"
+slug = "hios"
+repository = "ntu254/Harness-Intelligence-OS"
+default_release_origin = "ntu254/Harness-Intelligence-OS"
+"#,
+        )
+        .unwrap();
     }
 
     fn passing_codegraph_artifact(story_id: &str) -> serde_json::Value {
@@ -7703,6 +7805,12 @@ mod tests {
         assert_eq!(path, output);
         assert!(path.is_file());
         assert_eq!(report.artifact_type, "governance-report");
+        assert_eq!(report.schema_version, "1.1.0");
+        assert_eq!(report.identity.short_name, "HI-OS");
+        assert_eq!(
+            report.identity.default_release_origin,
+            "ntu254/Harness-Intelligence-OS"
+        );
         assert_eq!(report.story_summary.total, 1);
         assert_eq!(report.story_summary.implemented, 1);
         assert_eq!(report.gate_summary.not_run, 1);
@@ -7724,7 +7832,12 @@ mod tests {
         assert!(report.stories[0].missing_evidence.is_empty());
 
         let value = serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap()).unwrap();
-        assert_eq!(value["schema_version"], "1.0.0");
+        assert_eq!(value["schema_version"], "1.1.0");
+        assert_eq!(value["identity"]["short_name"], "HI-OS");
+        assert_eq!(
+            value["identity"]["default_release_origin"],
+            "ntu254/Harness-Intelligence-OS"
+        );
         assert_eq!(value["maturity_summary"]["release_verified"], true);
         assert_eq!(value["stories"][0]["proof"]["unit"], true);
 
@@ -7791,10 +7904,17 @@ mod tests {
         fs::write(
             &report_path,
             serde_json::to_vec_pretty(&serde_json::json!({
-                "schema_version": "1.0.0",
+                "schema_version": "1.1.0",
                 "artifact_type": "governance-report",
                 "report_id": "88888888-8888-4888-8888-888888888888",
                 "generated_at": "2026-06-07T00:00:00Z",
+                "identity": {
+                    "product_name": "Harness Intelligence OS",
+                    "short_name": "HI-OS",
+                    "slug": "hios",
+                    "repository": "ntu254/Harness-Intelligence-OS",
+                    "default_release_origin": "ntu254/Harness-Intelligence-OS"
+                },
                 "repository": {
                     "origin": "example/repo",
                     "commit": "abcdef1",
@@ -7868,6 +7988,8 @@ mod tests {
         assert_eq!(report.maturity_summary.level, "trusted");
         let html = fs::read_to_string(output).unwrap();
         assert!(html.contains("HI-OS Governance Dashboard"));
+        assert!(html.contains("Harness Intelligence OS"));
+        assert!(html.contains("ntu254/Harness-Intelligence-OS"));
         assert!(html.contains("trusted (91)"));
         assert!(html.contains("US-DASH"));
         assert!(html.contains("&lt;missing&gt;"));
@@ -8369,6 +8491,36 @@ forbidden_imports = ["infrastructure"]
             missing_expected_assets(&expected, &observed),
             vec!["harness-cli-linux-x64.sha256".to_owned()]
         );
+    }
+
+    #[test]
+    fn hios_identity_config_aligns_with_release_origin() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        write_test_identity_config(temp_dir.path());
+
+        let identity = load_hios_identity(temp_dir.path()).unwrap();
+        assert_eq!(identity.product_name, "Harness Intelligence OS");
+        assert_eq!(identity.short_name, "HI-OS");
+        assert_eq!(identity.repository, "ntu254/Harness-Intelligence-OS");
+        assert_eq!(
+            identity.default_release_origin,
+            "ntu254/Harness-Intelligence-OS"
+        );
+
+        let release_config = ReleaseConfig {
+            origin: "ntu254/Harness-Intelligence-OS".to_owned(),
+            tag_prefix: "harness-cli-v".to_owned(),
+        };
+        validate_identity_matches_release_config(&identity, &release_config).unwrap();
+
+        let mismatch = ReleaseConfig {
+            origin: "example/not-hios".to_owned(),
+            tag_prefix: "harness-cli-v".to_owned(),
+        };
+        assert!(matches!(
+            validate_identity_matches_release_config(&identity, &mismatch),
+            Err(HarnessInfraError::InvalidReleaseConfig(_))
+        ));
     }
 
     #[test]

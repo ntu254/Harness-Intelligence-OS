@@ -33,6 +33,8 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Show the tracked HI-OS sovereign identity.
+    Identity,
     /// Create the harness database if it does not already exist.
     Init,
     /// Apply schema migrations.
@@ -616,6 +618,17 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
     let service = HarnessService::new(resolve_context()?);
 
     match cli.command {
+        Command::Identity => {
+            let identity = service.identity()?;
+            println!("Product: {}", identity.product_name);
+            println!("Short name: {}", identity.short_name);
+            println!("Slug: {}", identity.slug);
+            println!("Repository: {}", identity.repository);
+            println!(
+                "Default release origin: {}",
+                identity.default_release_origin
+            );
+        }
         Command::Init => print_init_result(service.init()?),
         Command::Migrate => print_migrate_result(service.migrate()?),
         Command::Import(args) => match args.source {
@@ -1873,6 +1886,13 @@ mod tests {
     fn command_help_documents_lane_values_and_version() {
         let mut command = Cli::command();
         assert!(command.render_long_help().to_string().contains("--version"));
+
+        let identity_help = command
+            .find_subcommand_mut("identity")
+            .unwrap()
+            .render_long_help()
+            .to_string();
+        assert!(identity_help.contains("HI-OS sovereign identity"));
 
         let intake_help = command
             .find_subcommand_mut("intake")

@@ -1,0 +1,6 @@
+[identity]
+product_name = "Harness Intelligence OS"
+short_name = "HI-OS"
+slug = "hios"
+repository = "ntu254/Harness-Intelligence-OS"
+default_release_origin = "ntu254/Harness-Intelligence-OS"

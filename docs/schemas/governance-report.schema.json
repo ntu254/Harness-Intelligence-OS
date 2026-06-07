@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/ntu254/Harness-Intelligence-OS/blob/main/docs/schemas/governance-report.schema.json",
   "title": "HI-OS Governance Report",
-  "description": "Static governance evidence snapshot for HI-OS v0.6 reporting and dashboard export.",
+  "description": "Static governance evidence snapshot for HI-OS reporting and dashboard export.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -10,6 +10,7 @@
     "artifact_type",
     "report_id",
     "generated_at",
+    "identity",
     "repository",
     "story_summary",
     "gate_summary",
@@ -21,7 +22,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "1.0.0"
+      "const": "1.1.0"
     },
     "artifact_type": {
       "const": "governance-report"
@@ -33,6 +34,39 @@
     "generated_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "product_name",
+        "short_name",
+        "slug",
+        "repository",
+        "default_release_origin"
+      ],
+      "properties": {
+        "product_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "short_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]+$"
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "default_release_origin": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        }
+      }
     },
     "repository": {
       "type": "object",

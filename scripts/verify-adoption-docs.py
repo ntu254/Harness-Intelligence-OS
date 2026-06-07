@@ -45,6 +45,9 @@ def main() -> int:
 
     readme_needles = [
         "# Harness Intelligence OS",
+        "Sovereign Identity",
+        "hios.toml",
+        "harness-cli identity",
         "5-Minute Quickstart",
         "intake",
         "context",
@@ -171,6 +174,7 @@ def main() -> int:
 
     cookbook_needles = [
         "# Command Cookbook",
+        "harness-cli identity",
         "## Intake",
         "## Context",
         "## Verify",
@@ -209,6 +213,9 @@ def main() -> int:
     require(docs_readme, "agents/", "docs/README.md")
     require(docs_readme, "troubleshooting.md", "docs/README.md")
     require(docs_readme, "COMMAND_COOKBOOK.md", "docs/README.md")
+    require(docs_readme, "hios.toml", "docs/README.md")
+    require(scripts_readme, "harness-cli identity", "scripts/README.md")
+    require(scripts_readme, "hios.toml", "scripts/README.md")
     require(agents_text, "Codex", "docs/agents/*")
     require(agents_text, "Claude Code", "docs/agents/*")
     require(agents_text, "Cursor", "docs/agents/*")

@@ -10,6 +10,7 @@ projects use the prebuilt binary at `scripts/bin/harness-cli` on macOS/Linux or
 
 ```bash
 scripts/bin/harness-cli init          # Create the database
+scripts/bin/harness-cli identity      # Show tracked HI-OS product identity
 scripts/bin/harness-cli intake ...    # Record a feature intake classification
 scripts/bin/harness-cli story ...     # Add or update a story (test matrix row)
 scripts/bin/harness-cli story update --id US-001 --unit 1 --integration 1 --e2e 0 --platform 0
@@ -60,6 +61,7 @@ Current migrated commands:
 
 ```bash
 scripts/bin/harness-cli init
+scripts/bin/harness-cli identity
 scripts/bin/harness-cli migrate
 scripts/bin/harness-cli import brownfield
 scripts/bin/harness-cli intake ...
@@ -171,7 +173,9 @@ distribution chain:
 .\scripts\bin\harness-cli.exe release verify --version 0.6.0
 ```
 
-The default public origin and tag prefix come from `harness-release.toml`.
+The tracked product identity comes from `hios.toml`. The default public origin
+and tag prefix come from `harness-release.toml`; `release verify` checks that
+the release origin remains aligned with the HI-OS identity origin.
 The command checks release metadata, all expected platform assets, the selected
 binary download, SHA256, reported version, and a non-mutating smoke command.
 It writes a detailed JSON report under `.harness/release/` and a summary row to
