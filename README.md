@@ -2,6 +2,12 @@
 
 # Harness Intelligence OS
 
+<p align="center">
+  <a href="./README.md"><strong>English</strong></a>
+  ·
+  <a href="./README.vi.md">Tiếng Việt</a>
+</p>
+
 ### Agent-ready operating layer for software repositories
 
 **HI-OS helps humans and AI coding agents move from intent to verified work without letting agents jump straight into edits.**
