@@ -222,18 +222,19 @@ HI-OS publishes prebuilt Harness CLI binaries with SHA256 assets for:
 Verify the public release chain:
 
 ```bash
-scripts/bin/harness-cli release verify --version 0.6.0
+scripts/bin/harness-cli release verify --version 0.7.0
 ```
 
 On Windows:
 
 ```powershell
-.\scripts\bin\harness-cli.exe release verify --version 0.6.0
+.\scripts\bin\harness-cli.exe release verify --version 0.7.0
 ```
 
-`release verify` checks release metadata, 5 platform binaries, 5 SHA256 files,
-download, checksum, binary version, and a smoke command. Network or GitHub
-availability failures are `inconclusive`, not `pass`.
+`release verify` checks release metadata, 5 platform binaries, 5 binary SHA256
+files, the production payload ZIP and its SHA256, host binary version, and a
+smoke command. Network or GitHub availability failures are `inconclusive`, not
+`pass`.
 
 The default public origin is `ntu254/Harness-Intelligence-OS`, configured in
 `harness-release.toml` and aligned with tracked identity in `hios.toml`.
@@ -341,13 +342,10 @@ Completed foundation:
 - v0.4: MCP artifact contracts and provider adapters.
 - v0.5: Structured friction learning loop.
 - v0.6: Governance report, maturity summary, and static dashboard.
-
-Current adoption work:
-
 - v0.7: Adoption Ready.
 
-The v0.7 focus is not new feature surface. It is making HI-OS easy to install,
-understand, use, debug, and trust.
+HI-OS v0.7 is the completed adoption line: installable, understandable,
+debuggable, production-clean, and publicly verifiable.
 
 ## Contributing
 

@@ -49,6 +49,13 @@ jobs:
             scripts/build-production-payload.py \
             scripts/verify-production-payload.py
 
+      - name: Run contract and adoption verifiers
+        run: |
+          python scripts/verify-adoption-docs.py
+          python scripts/verify-governance-report-schema.py
+          python scripts/verify-mcp-artifact-contracts.py
+          python scripts/verify-friction-taxonomy.py
+
       - name: Check Node.js 24 action readiness
         shell: pwsh
         run: .github/scripts/verify-node24-actions.ps1
@@ -112,9 +119,41 @@ jobs:
             dist/${{ matrix.binary }}.sha256
           if-no-files-found: error
 
+  package:
+    name: Build Production Payload
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/harness-cli/Cargo.toml | head -n 1)"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build and verify production payload
+        run: |
+          python scripts/build-production-payload.py --version "${{ steps.version.outputs.version }}"
+          python scripts/verify-production-payload.py \
+            --version "${{ steps.version.outputs.version }}" \
+            --source-check
+
+      - name: Upload production payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: hios-production
+          path: |
+            dist/hios-production-v${{ steps.version.outputs.version }}.zip
+            dist/hios-production-v${{ steps.version.outputs.version }}.zip.sha256
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, package]
     runs-on: ubuntu-24.04
     if: ${{ github.event_name == 'push' || github.event.inputs.release_tag != '' }}
     env:
@@ -129,6 +168,12 @@ jobs:
         with:
           pattern: harness-cli-*
           merge-multiple: true
+          path: dist
+
+      - name: Download production payload
+        uses: actions/download-artifact@v8
+        with:
+          name: hios-production
           path: dist
 
       - name: Create release if needed
@@ -146,4 +191,9 @@ jobs:
               --notes-file "$notes_file"
 
       - name: Upload release assets
-        run: gh release upload "$RELEASE_TAG" dist/harness-cli-* --repo "$GITHUB_REPOSITORY" --clobber
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            dist/harness-cli-* \
+            dist/hios-production-* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

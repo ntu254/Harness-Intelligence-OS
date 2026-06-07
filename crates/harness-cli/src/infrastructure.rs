@@ -864,6 +864,7 @@ impl HarnessRepository for SqliteHarnessRepository {
         let platform = input.platform.unwrap_or_else(host_release_platform);
         let binary_asset = binary_asset_for_platform(&platform)?.to_owned();
         let checksum_asset = format!("{binary_asset}.sha256");
+        let payload_assets = production_payload_assets(&input.version);
         let tag = format!("{}{}", config.tag_prefix, input.version);
         let output_path = input.output.unwrap_or_else(|| {
             self.repo_root
@@ -886,6 +887,12 @@ impl HarnessRepository for SqliteHarnessRepository {
             checksum_asset: checksum_asset.clone(),
             expected_hash: None,
             actual_hash: None,
+            payload_asset: payload_assets.as_ref().map(|assets| assets.0.clone()),
+            payload_checksum_asset: payload_assets.as_ref().map(|assets| assets.1.clone()),
+            payload_expected_hash: None,
+            payload_actual_hash: None,
+            payload_download: ReleaseCheckResult::Inconclusive,
+            payload_checksum: ReleaseCheckResult::Inconclusive,
             download: ReleaseCheckResult::Inconclusive,
             checksum: ReleaseCheckResult::Inconclusive,
             version_check: ReleaseCheckResult::Inconclusive,
@@ -5559,7 +5566,7 @@ struct ExternalFailure {
     message: String,
 }
 
-fn validate_release_version(version: &str) -> Result<()> {
+fn parse_release_version(version: &str) -> Result<(u64, u64, u64)> {
     let parts = version.split('.').collect::<Vec<_>>();
     if parts.len() != 3
         || parts
@@ -5570,7 +5577,21 @@ fn validate_release_version(version: &str) -> Result<()> {
             "version '{version}' must use numeric major.minor.patch form"
         )));
     }
-    Ok(())
+    let parsed = parts
+        .iter()
+        .map(|part| {
+            part.parse::<u64>().map_err(|_| {
+                HarnessInfraError::InvalidReleaseInput(format!(
+                    "version '{version}' contains a number that is too large"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((parsed[0], parsed[1], parsed[2]))
+}
+
+fn validate_release_version(version: &str) -> Result<()> {
+    parse_release_version(version).map(|_| ())
 }
 
 fn validate_release_origin(origin: &str) -> Result<()> {
@@ -5616,8 +5637,17 @@ fn binary_asset_for_platform(platform: &str) -> Result<&'static str> {
     }
 }
 
-fn expected_release_assets() -> Vec<String> {
-    [
+fn production_payload_assets(version: &str) -> Option<(String, String)> {
+    let parsed = parse_release_version(version).ok()?;
+    if parsed < (0, 7, 0) {
+        return None;
+    }
+    let archive = format!("hios-production-v{version}.zip");
+    Some((archive.clone(), format!("{archive}.sha256")))
+}
+
+fn expected_release_assets(version: &str) -> Vec<String> {
+    let mut assets = [
         "harness-cli-linux-arm64",
         "harness-cli-linux-x64",
         "harness-cli-macos-arm64",
@@ -5626,7 +5656,11 @@ fn expected_release_assets() -> Vec<String> {
     ]
     .into_iter()
     .flat_map(|binary| [binary.to_owned(), format!("{binary}.sha256")])
-    .collect()
+    .collect::<Vec<_>>();
+    if let Some((archive, checksum)) = production_payload_assets(version) {
+        assets.extend([archive, checksum]);
+    }
+    assets
 }
 
 fn run_release_checks(
@@ -5655,7 +5689,7 @@ fn run_release_checks(
         .collect();
     report.assets_checked = report.assets.len();
 
-    let expected = expected_release_assets();
+    let expected = expected_release_assets(&report.version);
     let observed = release
         .assets
         .iter()
@@ -5727,6 +5761,67 @@ fn run_release_checks(
         return Ok(());
     }
     report.checksum = ReleaseCheckResult::Pass;
+
+    if let (Some(payload_name), Some(payload_checksum_name)) = (
+        report.payload_asset.as_deref(),
+        report.payload_checksum_asset.as_deref(),
+    ) {
+        let payload = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == payload_name)
+            .expect("complete v0.7+ asset contract includes production payload");
+        let payload_checksum = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == payload_checksum_name)
+            .expect("complete v0.7+ asset contract includes payload checksum");
+        let payload_bytes = match download_public_asset(&payload.browser_download_url) {
+            Ok(bytes) => bytes,
+            Err(failure) => {
+                report.payload_download = failure.result;
+                report.result = failure.result;
+                report.failures.push(failure.message);
+                return Ok(());
+            }
+        };
+        let payload_checksum_bytes =
+            match download_public_asset(&payload_checksum.browser_download_url) {
+                Ok(bytes) => bytes,
+                Err(failure) => {
+                    report.payload_download = failure.result;
+                    report.result = failure.result;
+                    report.failures.push(failure.message);
+                    return Ok(());
+                }
+            };
+        report.payload_download = ReleaseCheckResult::Pass;
+
+        let expected_payload_hash = match parse_sha256(&payload_checksum_bytes) {
+            Ok(hash) => hash,
+            Err(message) => {
+                report.payload_checksum = ReleaseCheckResult::Fail;
+                report.result = ReleaseCheckResult::Fail;
+                report
+                    .failures
+                    .push(format!("production payload checksum is invalid: {message}"));
+                return Ok(());
+            }
+        };
+        let actual_payload_hash = format!("{:x}", Sha256::digest(&payload_bytes));
+        report.payload_expected_hash = Some(expected_payload_hash.clone());
+        report.payload_actual_hash = Some(actual_payload_hash.clone());
+        if expected_payload_hash != actual_payload_hash {
+            report.payload_checksum = ReleaseCheckResult::Fail;
+            report.result = ReleaseCheckResult::Fail;
+            report.failures.push(format!(
+                "checksum mismatch for {}: expected {expected_payload_hash}, got {actual_payload_hash}",
+                payload.name
+            ));
+            return Ok(());
+        }
+        report.payload_checksum = ReleaseCheckResult::Pass;
+    }
 
     if platform != host_release_platform() {
         report.result = ReleaseCheckResult::Inconclusive;
@@ -8471,10 +8566,12 @@ forbidden_imports = ["infrastructure"]
         assert!(validate_release_version("v0.2.0").is_err());
         assert!(validate_release_origin("ntu254/Harness-Intelligence-OS").is_ok());
         assert!(validate_release_origin("not-an-origin").is_err());
-        assert_eq!(expected_release_assets().len(), 10);
-        assert!(
-            expected_release_assets().contains(&"harness-cli-windows-x64.exe.sha256".to_owned())
-        );
+        assert_eq!(expected_release_assets("0.6.0").len(), 10);
+        assert_eq!(expected_release_assets("0.7.0").len(), 12);
+        assert!(expected_release_assets("0.7.0")
+            .contains(&"harness-cli-windows-x64.exe.sha256".to_owned()));
+        assert!(expected_release_assets("0.7.0")
+            .contains(&"hios-production-v0.7.0.zip.sha256".to_owned()));
         assert_eq!(
             parse_sha256(
                 b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  binary"
@@ -8486,7 +8583,15 @@ forbidden_imports = ["infrastructure"]
         assert_eq!(http_status_result(404), ReleaseCheckResult::Fail);
         assert_eq!(http_status_result(429), ReleaseCheckResult::Inconclusive);
         assert_eq!(http_status_result(503), ReleaseCheckResult::Inconclusive);
-        let expected = expected_release_assets();
+        assert_eq!(production_payload_assets("0.6.0"), None);
+        assert_eq!(
+            production_payload_assets("0.7.0"),
+            Some((
+                "hios-production-v0.7.0.zip".to_owned(),
+                "hios-production-v0.7.0.zip.sha256".to_owned()
+            ))
+        );
+        let expected = expected_release_assets("0.7.0");
         let mut observed = expected.clone();
         observed.retain(|name| name != "harness-cli-linux-x64.sha256");
         assert_eq!(

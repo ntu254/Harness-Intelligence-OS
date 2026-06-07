@@ -246,19 +246,19 @@ Publishing those files remains part of release hardening.
 Verify a public CLI release:
 
 ```bash
-scripts/bin/harness-cli release verify --version 0.6.0
+scripts/bin/harness-cli release verify --version 0.7.0
 ```
 
 Verify release proof for a story:
 
 ```bash
-scripts/bin/harness-cli release verify --version 0.6.0 --story US-045
+scripts/bin/harness-cli release verify --version 0.7.0 --story US-045
 ```
 
 Override origin only when intentionally verifying a fork:
 
 ```bash
-scripts/bin/harness-cli release verify --version 0.6.0 --origin ntu254/Harness-Intelligence-OS
+scripts/bin/harness-cli release verify --version 0.7.0 --origin ntu254/Harness-Intelligence-OS
 ```
 
 Network or GitHub availability failures are `inconclusive`, not `pass`.

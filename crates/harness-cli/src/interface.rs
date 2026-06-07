@@ -935,6 +935,17 @@ pub fn run(cli: Cli) -> Result<(), InterfaceError> {
                 println!("Assets checked: {}", report.assets_checked);
                 println!("Download: {}", report.download.as_db_value());
                 println!("Checksum: {}", report.checksum.as_db_value());
+                if let Some(payload_asset) = &report.payload_asset {
+                    println!("Payload: {payload_asset}");
+                    println!(
+                        "Payload download: {}",
+                        report.payload_download.as_db_value()
+                    );
+                    println!(
+                        "Payload checksum: {}",
+                        report.payload_checksum.as_db_value()
+                    );
+                }
                 println!("Version: {}", report.version_check.as_db_value());
                 println!("Smoke install: {}", report.smoke_install.as_db_value());
                 for failure in &report.failures {

@@ -151,7 +151,7 @@ By default the installer also downloads the prebuilt Rust Harness CLI for the
 current platform into `scripts/bin/harness-cli` on macOS/Linux or
 `scripts/bin/harness-cli.exe` on Windows, then verifies its `.sha256` checksum.
 A source branch can pin the release used by the installer through
-`scripts/harness-cli-release-tag`; HI-OS v0.6 pins `harness-cli-v0.6.0` so
+`scripts/harness-cli-release-tag`; HI-OS v0.7 pins `harness-cli-v0.7.0` so
 branch installs receive the trusted-distribution CLI. Set
 `HARNESS_CLI_RELEASE_TAG` to override that tag, or set
 `HARNESS_CLI_BASE_URL` to point at an alternate artifact
@@ -202,14 +202,15 @@ Verify an existing public Harness CLI release through the complete trusted
 distribution chain:
 
 ```powershell
-.\scripts\bin\harness-cli.exe release verify --version 0.6.0
+.\scripts\bin\harness-cli.exe release verify --version 0.7.0
 ```
 
 The tracked product identity comes from `hios.toml`. The default public origin
 and tag prefix come from `harness-release.toml`; `release verify` checks that
 the release origin remains aligned with the HI-OS identity origin.
-The command checks release metadata, all expected platform assets, the selected
-binary download, SHA256, reported version, and a non-mutating smoke command.
+The command checks release metadata, all expected platform assets, the
+production payload and SHA256 for v0.7+, the selected binary download, SHA256,
+reported version, and a non-mutating smoke command.
 It writes a detailed JSON report under `.harness/release/` and a summary row to
 SQLite. A trust failure is `fail`; network or GitHub unavailability is
 `inconclusive`. Both exit non-zero and neither satisfies story governance.
@@ -222,7 +223,7 @@ Stories opt into the blocking evidence requirement explicitly:
 
 ## Governance Report and Dashboard
 
-Generate the v0.6 governance report and static dashboard:
+Generate the governance report and static dashboard:
 
 ```powershell
 .\scripts\bin\harness-cli.exe governance report --output .harness/reports/governance-report.json
@@ -347,6 +348,8 @@ native hosted runners, and upload these release assets:
 - `harness-cli-linux-arm64.sha256`
 - `harness-cli-windows-x64.exe`
 - `harness-cli-windows-x64.exe.sha256`
+- `hios-production-v0.7.0.zip`
+- `hios-production-v0.7.0.zip.sha256`
 
 ## MCP Artifact Contract Verification
 

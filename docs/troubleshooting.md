@@ -84,14 +84,14 @@ What to check:
 
    ```text
    scripts/harness-cli-release-tag
-   harness-cli-v0.6.0
+   harness-cli-v0.7.0
    ```
 
 4. If the download path is unavailable, retry later or override the release tag
    only when you intentionally trust that release:
 
    ```bash
-   HARNESS_CLI_RELEASE_TAG=harness-cli-v0.6.0 <install command>
+   HARNESS_CLI_RELEASE_TAG=harness-cli-v0.7.0 <install command>
    ```
 
 Do not bypass checksum verification. A checksum mismatch is a trust failure,
@@ -102,13 +102,13 @@ not a warning.
 Run:
 
 ```bash
-scripts/bin/harness-cli release verify --version 0.6.0
+scripts/bin/harness-cli release verify --version 0.7.0
 ```
 
 Windows:
 
 ```powershell
-.\scripts\bin\harness-cli.exe release verify --version 0.6.0
+.\scripts\bin\harness-cli.exe release verify --version 0.7.0
 ```
 
 Common symptoms:
@@ -140,11 +140,13 @@ What to check:
    tag_prefix = "harness-cli-v"
    ```
 
-2. Confirm the release has 10 assets:
+2. Confirm a v0.7+ release has 12 assets:
 
    ```text
    5 platform binaries
-   5 SHA256 files
+   5 binary SHA256 files
+   1 production payload ZIP
+   1 payload SHA256 file
    ```
 
 3. Inspect the JSON evidence under:
@@ -366,4 +368,3 @@ scripts/bin/harness-cli rules suggest
 
 Friction records do not change policy automatically. They create reviewable
 evidence for later improvements.
-

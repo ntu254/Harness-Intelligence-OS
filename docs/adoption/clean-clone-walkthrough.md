@@ -83,10 +83,10 @@ cargo build --package harness-cli --release
 .\target\release\harness-cli.exe --version
 ```
 
-Expected version for the v0.6 public release line:
+Expected version for the v0.7 public release line:
 
 ```text
-harness-cli 0.6.0
+harness-cli 0.7.0
 ```
 
 ## 3. Initialize Local Durable State
@@ -278,19 +278,21 @@ This step uses the network and GitHub release assets. It proves trusted
 distribution for the public CLI release:
 
 ```bash
-./target/release/harness-cli release verify --version 0.6.0
+./target/release/harness-cli release verify --version 0.7.0
 ```
 
 On Windows PowerShell:
 
 ```powershell
-.\target\release\harness-cli.exe release verify --version 0.6.0
+.\target\release\harness-cli.exe release verify --version 0.7.0
 ```
 
 Expected checks:
 
 - release metadata found;
-- 5 platform binaries and 5 SHA256 assets discovered;
+- 5 platform binaries, 5 binary SHA256 files, the production ZIP, and its
+  SHA256 discovered;
+- production payload SHA256 verified;
 - selected platform binary downloaded;
 - SHA256 verified;
 - binary reports the requested version;
