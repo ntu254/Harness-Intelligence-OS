@@ -255,6 +255,7 @@ docs/CONTEXT_RULES.md             what agents should read and when
 docs/agents/                      Cursor, Claude Code, and Codex packs
 docs/adoption/                    first-run adoption walkthroughs
 docs/examples/                    end-to-end example workflows
+docs/troubleshooting.md           installer, provider, gate, and dashboard fixes
 docs/demo/                        example transformation from idea to story
 docs/stories/                     story packets and validation evidence
 docs/decisions/                   durable decisions
@@ -276,6 +277,10 @@ For agent-specific operating notes, read:
 - `docs/agents/codex.md`
 - `docs/agents/claude-code.md`
 - `docs/agents/cursor.md`
+
+For common failures and recovery steps, read:
+
+- `docs/troubleshooting.md`
 
 For command details, use:
 

@@ -34,6 +34,8 @@ def main() -> int:
     ]
     agents = {path: read(path) for path in agent_paths}
     agents_text = "\n".join(agents.values())
+    troubleshooting_path = "docs/troubleshooting.md"
+    troubleshooting = read(troubleshooting_path)
     agents_index = read("AGENTS.md")
     readme = read("README.md")
     docs_readme = read("docs/README.md")
@@ -52,6 +54,7 @@ def main() -> int:
         "docs/agents/codex.md",
         "docs/agents/claude-code.md",
         "docs/agents/cursor.md",
+        "docs/troubleshooting.md",
         "release verify --version 0.6.0",
         "Governance Dashboard",
         "CodeGraph",
@@ -138,15 +141,42 @@ def main() -> int:
         require(readme, path, "README.md")
         require(agents_index, path, "AGENTS.md")
 
+    troubleshooting_needles = [
+        "# Troubleshooting",
+        "Installer Fails",
+        "Release Verify Fails",
+        "CodeGraph Unavailable",
+        "NotebookLM Auth Or Session Fails",
+        "NotebookLM Output Fails Validation",
+        "Governance Gate Fails",
+        "Governance Report Or Dashboard Fails",
+        "checksum mismatch",
+        "release verify --version 0.6.0",
+        "Context ingest: inconclusive",
+        "Context ingest: fail",
+        "story verify US-XXX",
+        "verify-governance-report-schema.py",
+        "harness.db",
+        ".harness/",
+        "Google credentials",
+        "provider session files",
+        "Do not weaken the story gate",
+    ]
+
+    for needle in troubleshooting_needles:
+        require(troubleshooting, needle, troubleshooting_path)
+
     require(
         readme,
         "docs/adoption/clean-clone-walkthrough.md",
         "README.md",
     )
     require(readme, "docs/examples/full-agent-workflow.md", "README.md")
+    require(readme, "docs/troubleshooting.md", "README.md")
     require(docs_readme, "adoption/", "docs/README.md")
     require(docs_readme, "examples/", "docs/README.md")
     require(docs_readme, "agents/", "docs/README.md")
+    require(docs_readme, "troubleshooting.md", "docs/README.md")
     require(agents_text, "Codex", "docs/agents/*")
     require(agents_text, "Claude Code", "docs/agents/*")
     require(agents_text, "Cursor", "docs/agents/*")

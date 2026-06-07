@@ -13,6 +13,8 @@ future user-provided spec.
 - `HARNESS_BACKLOG.md`: legacy improvement list; current improvement records
   are stored with `scripts/bin/harness-cli backlog`.
 - `GLOSSARY.md`: shared terms.
+- `troubleshooting.md`: recovery steps for installer, release verification,
+  provider, governance gate, and dashboard failures.
 
 ## Folders
 
