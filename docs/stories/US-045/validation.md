@@ -48,4 +48,43 @@
 
 ### Public Release
 
-Pending tag publication and public verification.
+- Release prep commit: `552953b`.
+- Annotated tag: `harness-cli-v0.7.0`.
+- GitHub Actions workflow:
+  `https://github.com/ntu254/Harness-Intelligence-OS/actions/runs/27081479651`.
+- Workflow jobs passed:
+  - Verify;
+  - Build Production Payload;
+  - macOS arm64;
+  - macOS x64;
+  - Linux arm64;
+  - Linux x64;
+  - Windows x64;
+  - Publish GitHub Release.
+- Public release:
+  `https://github.com/ntu254/Harness-Intelligence-OS/releases/tag/harness-cli-v0.7.0`.
+- Release is public, non-draft, and non-prerelease.
+- Public assets: 12.
+- Public production payload SHA256:
+  `91599e1c177744c3ee7c045ef81729c329e16f833a3f4ea7e4dd5abb578d9c5a`.
+- `release verify --version 0.7.0 --story US-045` passed:
+  - all twelve expected assets discovered;
+  - host binary download and SHA256 passed;
+  - production payload download and SHA256 passed;
+  - binary version passed;
+  - smoke command passed.
+- Public raw installer from `main` installed and verified `harness-cli 0.7.0`
+  in an empty target.
+- Public production ZIP was downloaded, externally and internally verified,
+  extracted, and used to install `harness-cli 0.7.0` in another empty target.
+- Both public install paths passed identity, SQLite initialization, adoption,
+  MCP, friction, governance report schema, and dashboard checks.
+- Trace #48: Detailed 3/3.
+- US-045 mechanical verification: pass.
+- US-045 governance gate: pass.
+- Final governance report/dashboard:
+  - 30 stories;
+  - 29 gates pass;
+  - 0 gates fail;
+  - trusted maturity score 93.
+- Older public release assets remain unchanged.
